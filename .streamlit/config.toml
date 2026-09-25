@@ -3,6 +3,12 @@ headless = true
 port = 8501
 enableStaticServing = true
 
+[browser]
+# Streamlit phones home with anonymous usage stats by default. This project
+# claims to make zero external requests at runtime, and that claim has to hold
+# for the whole page, not just our own code.
+gatherUsageStats = false
+
 # ---------------------------------------------------------------------------
 # SomaiyaSat Ground Control - mission-control theme.
 # Pure black, one electric-blue accent, Inter + JetBrains Mono served locally

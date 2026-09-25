@@ -25,3 +25,7 @@ landing/dist/
 *.log
 landing/public/assets/source/*.pdf
 .vercel/
+
+# deployment secrets - never commit
+deploy/streamlit-secrets.toml
+.streamlit/secrets.toml

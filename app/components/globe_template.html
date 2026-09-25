@@ -78,6 +78,37 @@ a.backlink:hover{color:var(--white);border-color:rgba(61,107,255,.55);background
 .sat.selected .tag{border-color:currentColor;color:currentColor;}
 .sat:hover .tag{border-color:currentColor;}
 
+/* Real tracked objects read differently from the proposed mission: a hollow
+   diamond rather than a filled square, and a quieter tag. The distinction is
+   deliberate -- one is flying, the other is a proposal. */
+.sat-real .body{width:9px;height:9px;border-radius:2px;background:transparent;
+  border:1.5px solid currentColor;box-shadow:0 0 7px currentColor;
+  transform:translate(-50%,-50%) rotate(45deg);}
+.sat-real .halo{animation-duration:4.2s;opacity:.22;}
+.sat-real .tag{font-size:.55rem;opacity:.82;letter-spacing:.06em;}
+.sat-real:hover .tag,.sat-real.selected .tag{opacity:1;}
+
+/* separator + styling for the real-satellite cards in the right column */
+.card-sep{font-family:var(--mono);font-size:.58rem;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--muted);padding:12px 2px 2px;}
+.card-real{border-style:dashed;}
+
+/* Playback speed control. Stacked directly above the legend in the left
+   column: anchoring it bottom-right put it on top of the satellite cards. */
+#speed{position:absolute;left:18px;bottom:124px;z-index:25;padding:7px 9px;
+  display:flex;align-items:center;gap:6px;width:max-content;}
+#speed .lab{font-family:var(--mono);font-size:.56rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--muted);margin-right:2px;}
+#speed button{font-family:var(--mono);font-size:.62rem;color:var(--muted);
+  background:transparent;border:1px solid var(--border);border-radius:999px;
+  padding:.2rem .52rem;cursor:pointer;transition:.15s;}
+#speed button:hover{color:var(--white);border-color:rgba(61,107,255,.55);}
+#speed button.on{color:#fff;border-color:rgba(61,107,255,.85);
+  background:rgba(61,107,255,.2);}
+#ffwd{font-family:var(--mono);font-size:.58rem;letter-spacing:.12em;color:#ffb547;
+  margin-left:4px;display:none;}
+#ffwd.on{display:inline;}
+
 /* ------------------------------------------------------------------ left panel */
 #panel{position:absolute;left:18px;top:68px;width:326px;max-height:calc(100% - 132px);
   overflow-y:auto;overflow-x:hidden;padding:16px 16px 18px;z-index:25;
@@ -174,13 +205,27 @@ a.backlink:hover{color:var(--white);border-color:rgba(61,107,255,.55);background
     <div class="row"><span class="sw" style="background:#3ddc97"></span>Link &ge; 70 &middot; good</div>
     <div class="row"><span class="sw" style="background:#ffb547"></span>Link 40&ndash;69 &middot; fair</div>
     <div class="row"><span class="sw" style="background:#ff5c7a"></span>Link &lt; 40 &middot; poor</div>
+    <div class="row" style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,.1)">
+      <span class="sw" style="width:8px;height:8px;border-radius:2px;background:#8ea6ff"></span>SomaiyaSat &middot; proposed</div>
+    <div class="row"><span class="sw" style="width:8px;height:8px;border-radius:2px;
+      background:transparent;border:1.5px solid #8ea6ff;transform:rotate(45deg)"></span>Real orbit &middot; SGP4</div>
   </div>
   <div id="hint" class="glass">Drag to rotate &middot; Click a satellite</div>
+
+  <div id="speed" class="glass">
+    <span class="lab">Speed</span>
+    <span id="ffwd">FAST-FORWARD</span>
+  </div>
 
   <div id="boot">Acquiring orbit&hellip;</div>
 </div>
 
 <script src="/app/static/vendor/globe.gl.min.js"></script>
+<!-- satellite.js (MIT), vendored like globe.gl so the page still makes zero
+     external requests. This is the SGP4 propagator; it turns the real element
+     sets in DATA.tracked into real positions. Verified to agree with the
+     Python sgp4 the database uses to 0.00004 degrees. -->
+<script src="/app/static/vendor/satellite.min.js"></script>
 <script>
 (function () {
 "use strict";
@@ -196,15 +241,28 @@ function esc(s){ return String(s===null||s===undefined?"":s)
   .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function num(v,d){ return (v===null||v===undefined||isNaN(v)) ? "&mdash;" : Number(v).toFixed(d===undefined?2:d); }
 
-/* ------------------------------------------------------------------ orbit model
-   A simulated sun-synchronous track: 97.5 deg inclination, ~93 min period.
-   This is a visual model of the mission profile, not a propagated ephemeris. */
-var INCL = 97.5 * Math.PI / 180;
-var PERIOD_S = 93 * 60;
+/* ==================================================================== orbits
+   This globe shows TWO kinds of object, and never blurs the line between them.
+
+   1. CUBE01-03 -- the PROPOSED SomaiyaSat mission. It has not launched, so
+      there is no ephemeris to propagate. Their tracks are an analytic model of
+      the intended sun-synchronous profile: 97.5 deg inclination, ~93 min.
+
+   2. DATA.tracked -- REAL amateur-radio satellites in orbit right now,
+      propagated from real CelesTrak element sets with SGP4 via satellite.js.
+      These are the flight heritage behind the modes the mission proposes, and
+      they are how the ground segment gets validated before launch.
+
+   Both are drawn at the same instant of real UTC, so the picture is coherent.
+   ======================================================================== */
+var EARTH_R_KM  = 6371;
 var EARTH_DAY_S = 86164;
-var ALT = 0.15;              // globe radii above the surface
-var TIME_SCALE = 45;         // 1 real second = 45 simulated seconds
-var TRAIL_N = 70;            // trail samples
+var TRAIL_N     = 70;        // trail samples
+
+/* ---- 1. the proposed mission (analytic model) ---- */
+var INCL     = 97.5 * Math.PI / 180;
+var PERIOD_S = 93 * 60;
+var ALT      = 0.15;         // globe radii above the surface
 var TRAIL_SPAN_S = PERIOD_S * 0.30;
 
 var ORBIT_PHASE = { CUBE01: 0, CUBE02: 132, CUBE03: 247 };
@@ -215,7 +273,70 @@ function subpoint(cube, tSec){
   var lat = Math.asin(Math.sin(INCL) * Math.sin(u)) * 180/Math.PI;
   var dl  = Math.atan2(Math.cos(INCL) * Math.sin(u), Math.cos(u)) * 180/Math.PI;
   var lng = (ORBIT_RAAN[cube] || 0) + dl - 360 * (tSec / EARTH_DAY_S);
-  return { lat: lat, lng: lng };   // longitude left unwrapped on purpose
+  return { lat: lat, lng: lng, alt: ALT };  // longitude unwrapped on purpose
+}
+
+/* ---- 2. the real fleet (SGP4) ---- */
+/* Playback speed. Default 1 = genuinely live: the satellites sit where they
+   really are, matching the UTC clock in the bar above. Anything faster is
+   still real physics, just fast-forwarded, and the badge says so -- it must
+   never be mistaken for a live position. */
+var SPEED = 1;
+var SPEEDS = [1, 60, 300];
+
+var HAVE_SGP4 = (typeof satellite !== "undefined" &&
+                 typeof satellite.twoline2satrec === "function");
+
+var TRACKED = [];
+if (HAVE_SGP4) {
+  (DATA.tracked || []).forEach(function(t){
+    var rec;
+    try { rec = satellite.twoline2satrec(t.tle_line1, t.tle_line2); }
+    catch (e) { return; }                       // unusable element set: skip
+    if (!rec || rec.error) return;
+    TRACKED.push({
+      norad_id: t.norad_id,
+      name: t.object_name,
+      modes: t.payload_modes || "TT&C",
+      period_min: t.period_min,
+      inclination_deg: t.inclination_deg,
+      tle_age_days: t.tle_age_days,
+      tle_status: t.tle_status,
+      next_aos: t.next_aos,
+      next_link: t.next_link,
+      rec: rec,
+      real: true,
+      colour: linkColour(t.next_link),
+      lat: 0, lng: 0, alt: ALT
+    });
+  });
+}
+
+/* Propagate one real satellite to an absolute UTC instant. Returns null when
+   the element set cannot be evaluated there (a decayed object, for instance),
+   so callers must check rather than plot a bogus point. */
+function realSubpoint(rec, whenMs){
+  var d = new Date(whenMs);
+  var pv;
+  try { pv = satellite.propagate(rec, d); } catch (e) { return null; }
+  if (!pv || !pv.position) return null;
+  var gd = satellite.eciToGeodetic(pv.position, satellite.gstime(d));
+  var lat = satellite.degreesLat(gd.latitude);
+  var lng = satellite.degreesLong(gd.longitude);
+  if (isNaN(lat) || isNaN(lng)) return null;
+  return { lat: lat, lng: lng, alt: gd.height / EARTH_R_KM };
+}
+
+/* A real propagator returns longitude wrapped to [-180,180]. Feeding that
+   straight into a trail makes the path leap the full width of the map every
+   time it crosses the antimeridian, so unwrap the sequence first. */
+function unwrapLng(points){
+  for (var i = 1; i < points.length; i++){
+    var d = points[i].lng - points[i-1].lng;
+    if (d > 180)       points[i].lng -= 360;
+    else if (d < -180) points[i].lng += 360;
+  }
+  return points;
 }
 
 function haversineKm(a, b){
@@ -224,6 +345,35 @@ function haversineKm(a, b){
   var s = Math.sin(dLat/2)*Math.sin(dLat/2) +
           Math.cos(a.lat*toR)*Math.cos(b.lat*toR)*Math.sin(dLng/2)*Math.sin(dLng/2);
   return 2*R*Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+/* Elevation and slant range of a satellite as seen from a ground station.
+   The JavaScript twin of look_angles() in scripts/_orbit.py -- same WGS-84
+   ellipsoid, so the arcs drawn here agree with the passes in tracked_pass.
+   Elevation is the angle above the station's local horizon; negative means
+   below it, and therefore not workable however close it looks on the map. */
+var WGS84_A = 6378.137, WGS84_F = 1/298.257223563;
+var WGS84_E2 = WGS84_F * (2 - WGS84_F);
+
+function ecef(latDeg, lngDeg, altKm){
+  var la = latDeg * Math.PI/180, lo = lngDeg * Math.PI/180;
+  var N = WGS84_A / Math.sqrt(1 - WGS84_E2 * Math.sin(la)*Math.sin(la));
+  return [ (N+altKm)*Math.cos(la)*Math.cos(lo),
+           (N+altKm)*Math.cos(la)*Math.sin(lo),
+           (N*(1-WGS84_E2)+altKm)*Math.sin(la) ];
+}
+
+function lookAngles(station, sat){
+  var stAlt = (station.alt_m || 0) / 1000;
+  var g = ecef(station.lat, station.lng, stAlt);
+  var s = ecef(sat.lat, sat.lng, (sat.alt || 0) * EARTH_R_KM);
+  var dx = s[0]-g[0], dy = s[1]-g[1], dz = s[2]-g[2];
+  var rng = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  if (rng === 0) return { el: 90, range: 0 };
+  var la = station.lat * Math.PI/180, lo = station.lng * Math.PI/180;
+  var ux = Math.cos(la)*Math.cos(lo), uy = Math.cos(la)*Math.sin(lo), uz = Math.sin(la);
+  var sinEl = Math.max(-1, Math.min(1, (dx*ux + dy*uy + dz*uz) / rng));
+  return { el: Math.asin(sinEl) * 180/Math.PI, range: rng };
 }
 
 /* ------------------------------------------------------------------ data prep */
@@ -236,8 +386,31 @@ var SATS = (DATA.satellites || []).filter(function(s){
 
 SATS.forEach(function(s){
   s.colour = linkColour(s.link_score);
-  s.lat = 0; s.lng = 0; s.trail = [];
+  s.lat = 0; s.lng = 0; s.alt = ALT; s.trail = [];
+  s.real = false;                 // proposed mission, analytic track
+  s.name = s.cube_id;
+  s.uid  = s.cube_id;
 });
+
+/* Real objects need an identity that cannot collide with a cube_id, because
+   selection, marker classes and the cards are all keyed on it. */
+TRACKED.forEach(function(t){ t.uid = "N" + t.norad_id; });
+
+/* Everything the globe draws, in one list: the proposed cubes plus the real
+   fleet. Markers, trails, arcs and hit-testing all iterate this. */
+var ALL_SATS = SATS.concat(TRACKED);
+
+function bySat(uid){
+  for (var i = 0; i < ALL_SATS.length; i++)
+    if (ALL_SATS[i].uid === uid) return ALL_SATS[i];
+  return null;
+}
+
+/* Where a satellite is at an absolute UTC instant, whichever kind it is. */
+function satPosition(s, whenMs, simSec){
+  if (s.real) return realSubpoint(s.rec, whenMs);
+  return subpoint(s.cube_id, simSec);
+}
 
 /* The planner's own rules, mirrored for display only. The authoritative copy
    lives in plan_pass() in sql/ -- nothing here changes a decision. */
@@ -509,69 +682,115 @@ var selected = null;
 
 function makeMarker(sat){
   var div = document.createElement("div");
-  div.className = "sat";
+  /* Real objects get a modifier class so they read differently from the
+     proposed mission at a glance -- the legend explains which is which. */
+  div.className = "sat" + (sat.real ? " sat-real" : "");
   div.style.color = sat.colour;
+  var label = sat.real ? sat.name : sat.cube_id;
+  var score = sat.real ? sat.next_link : sat.link_score;
   div.innerHTML = '<div class="halo"></div><div class="body"></div>' +
-                  '<div class="tag">' + esc(sat.cube_id) + '</div>';
-  div.title = sat.cube_id + " · link " + sat.link_score;
-  div.addEventListener("click", function(ev){ ev.stopPropagation(); select(sat.cube_id, true); });
+                  '<div class="tag">' + esc(label) + '</div>';
+  div.title = label + (score === null || score === undefined
+                       ? "" : " · link " + score) +
+              (sat.real ? " · real orbit (SGP4)" : " · proposed mission");
+  div.addEventListener("click", function(ev){ ev.stopPropagation(); select(sat.uid, true); });
   sat._el = div;
   return div;
 }
 
 world
-  .htmlElementsData(SATS)
+  .htmlElementsData(ALL_SATS)
   .htmlLat(function(d){ return d.lat; })
   .htmlLng(function(d){ return d.lng; })
-  .htmlAltitude(ALT)
+  // Real satellites have a real, varying altitude; the proposed cubes sit at
+  // the fixed model altitude.
+  .htmlAltitude(function(d){ return d.alt === undefined ? ALT : d.alt; })
   .htmlTransitionDuration(0)
   .htmlElement(makeMarker);
 
 /* ------------------------------------------------------------------ animation */
-var t0 = Date.now();
+/* The simulation clock is accumulated rather than derived from a start time, so
+   changing SPEED cannot make the displayed instant jump: each frame advances it
+   by the real frame time multiplied by SPEED. */
+var t0        = Date.now();     // wall clock at boot (drives the analytic model)
+var simNowMs  = Date.now();     // the instant currently being displayed
+var lastFrame = Date.now();
 var lastArcKey = "";
 var lastTrail = 0;
 
 function tick(){
-  var tSim = (Date.now() - t0) / 1000 * TIME_SCALE;
+  /* One clock drives everything. At SPEED = 1 it tracks real time exactly, so
+     the real satellites sit where they actually are and agree with the UTC
+     clock in the bar above. */
+  var real = Date.now();
+  if (SPEED === 1) simNowMs = real;             // live: never drift from now
+  else             simNowMs += (real - lastFrame) * SPEED;
+  lastFrame = real;
+
+  var nowMs = simNowMs;
+  var tSim  = (simNowMs - t0) / 1000;
 
   // Weather drifts slowly relative to the surface, and the sun moves with
   // real UTC time. Both are cheap; updateSun() no-ops except once a minute.
   if (CLOUDS) CLOUDS.rotation.y = tSim * 0.0006;
-  updateSun(new Date());
+  updateSun(new Date(nowMs));
 
-  SATS.forEach(function(s){
-    var p = subpoint(s.cube_id, tSim);
-    s.lat = p.lat; s.lng = p.lng;
+  ALL_SATS.forEach(function(s){
+    var p = satPosition(s, nowMs, tSim);
+    if (p){ s.lat = p.lat; s.lng = p.lng; s.alt = p.alt; s.ok = true; }
+    else  { s.ok = false; }          // unusable elements: hide, never guess
   });
-  world.htmlElementsData(SATS);
+  world.htmlElementsData(ALL_SATS.filter(function(s){ return s.ok !== false; }));
 
   /* trails, refreshed a few times a second */
   if (Date.now() - lastTrail > 220){
     lastTrail = Date.now();
-    var paths = SATS.map(function(s){
+    var paths = [];
+    ALL_SATS.forEach(function(s){
       var pts = [];
-      for (var i = TRAIL_N; i >= 0; i--){
-        var q = subpoint(s.cube_id, tSim - TRAIL_SPAN_S * (i / TRAIL_N));
-        pts.push([q.lat, q.lng, ALT]);
+      if (s.real){
+        /* A real trail spans a real fraction of THIS satellite's own orbit,
+           so AO-7's 115-minute track is drawn longer than a 91-minute one. */
+        var spanMs = (s.period_min || 93) * 60 * 1000 * 0.30;
+        var seq = [];
+        for (var i = TRAIL_N; i >= 0; i--){
+          var q = realSubpoint(s.rec, nowMs - spanMs * (i / TRAIL_N));
+          if (q) seq.push(q);
+        }
+        if (seq.length < 2) return;
+        unwrapLng(seq);
+        pts = seq.map(function(q){ return [q.lat, q.lng, q.alt]; });
+      } else {
+        for (var j = TRAIL_N; j >= 0; j--){
+          var r = subpoint(s.cube_id, tSim - TRAIL_SPAN_S * (j / TRAIL_N));
+          pts.push([r.lat, r.lng, ALT]);
+        }
       }
-      return { pts: pts, colors: [fade(s.colour, 0), fade(s.colour, 1)] };
+      paths.push({ pts: pts, colors: [fade(s.colour, 0), fade(s.colour, 1)] });
     });
     world.pathsData(paths);
   }
 
-  /* downlink arcs for anything inside the ~2000 km access circle */
+  /* Downlink arcs for satellites a station can actually work.
+     The test is real elevation above the station's horizon -- the same
+     quantity tracked_pass stores and link_score_from_pass() scores -- not the
+     flat 2000 km ground-distance proxy this used before. A satellite 2000 km
+     away across the ground is below the horizon and cannot be worked. */
   var live = [];
-  SATS.forEach(function(s){
+  ALL_SATS.forEach(function(s){
+    if (s.ok === false) return;
+    var lngW = ((s.lng % 360) + 540) % 360 - 180;
     STATIONS.forEach(function(st){
-      var d = haversineKm({ lat: s.lat, lng: ((s.lng % 360) + 540) % 360 - 180 }, st);
-      if (d <= 2000){
+      var look = lookAngles(st, { lat: s.lat, lng: lngW, alt: s.alt });
+      var mask = (st.min_elevation_deg === undefined) ? 10 : st.min_elevation_deg;
+      if (look.el >= mask){
         live.push({
-          key: "L:" + s.cube_id + "-" + st.id,
+          key: "L:" + s.name + "-" + st.id,
           startLat: st.lat, startLng: st.lng, endLat: s.lat, endLng: s.lng,
           colour: [fade(s.colour, 0.35), fade(s.colour, 1)],
           stroke: 0.75, alt: 0.12, dashLen: 0.32, dashGap: 0.20, dashTime: 1700,
-          label: s.cube_id + " → " + st.name + " · " + Math.round(d) + " km"
+          label: s.name + " → " + st.name + " · " + look.el.toFixed(0) +
+                 "° el · " + Math.round(look.range) + " km"
         });
       }
     });
@@ -624,7 +843,79 @@ function sparkline(series, colour){
     '<span>24h ago</span><span>'+num(lo)+'V &ndash; '+num(hi)+'V</span><span>now</span></div>';
 }
 
+/* Panel for a REAL tracked satellite. It deliberately shows different fields
+   from the mission panel: there is no battery telemetry for someone else's
+   spacecraft, and pretending otherwise would be inventing data. What we do
+   have is the orbit, the element-set age, and the next real pass. */
+function renderRealPanel(sat){
+  var home = null;
+  for (var i = 0; i < STATIONS.length; i++)
+    if (STATIONS[i].id === "KJSSE") home = STATIONS[i];
+  if (!home && STATIONS.length) home = STATIONS[0];
+
+  var lngW = ((sat.lng % 360) + 540) % 360 - 180;
+  var look = home ? lookAngles(home, { lat: sat.lat, lng: lngW, alt: sat.alt })
+                  : { el: NaN, range: NaN };
+  var visible = home && look.el >= (home.min_elevation_deg === undefined ? 10 : home.min_elevation_deg);
+
+  var ageColour = sat.tle_status === "FRESH" ? C.good
+                : (sat.tle_status === "AGEING" ? C.fair : C.poor);
+
+  var modeChips = String(sat.modes || "").split(",").map(function(m){
+    m = m.trim();
+    if (!m) return "";
+    return '<div class="chip on"><span class="m">' + esc(m) + '</span></div>';
+  }).join("");
+
+  var nextLine = sat.next_aos
+    ? '<div class="kv"><span class="k">Next pass (KJSSE)</span><span class="v" data-next="' +
+        esc(sat.next_aos) + '">&mdash;</span></div>' +
+      '<div class="kv"><span class="k">Predicted link</span><span class="v" style="color:' +
+        linkColour(sat.next_link) + '">' + esc(sat.next_link) + '</span></div>'
+    : '<div class="kv"><span class="k">Next pass (KJSSE)</span><span class="v">none forecast</span></div>';
+
+  panel.innerHTML =
+    '<div class="panel-head"><div>' +
+      '<p class="panel-title">' + esc(sat.name) + '</p>' +
+      '<span class="status-pill" style="color:' + (visible ? C.good : C.muted) + '">' +
+        (visible ? "IN VIEW FROM KJSSE" : "BELOW HORIZON") + '</span>' +
+    '</div><button class="panel-close" aria-label="Close">&times;</button></div>' +
+
+    '<div class="lbl" style="margin-top:14px">[&nbsp;Real object&nbsp;]</div>' +
+    '<div class="kv"><span class="k">NORAD ID</span><span class="v">' + esc(sat.norad_id) + '</span></div>' +
+    '<div class="kv"><span class="k">Element set age</span><span class="v" style="color:' +
+      ageColour + '">' + num(sat.tle_age_days, 2) + ' d · ' + esc(sat.tle_status) + '</span></div>' +
+    '<div class="kv"><span class="k">Propagator</span><span class="v">SGP4</span></div>' +
+
+    '<div class="lbl" style="margin-top:14px">[&nbsp;Orbit now&nbsp;]</div>' +
+    '<div class="grid4">' +
+      '<div class="stat"><span class="lbl">Altitude</span><span class="n">' +
+        num(sat.alt * EARTH_R_KM, 0) + ' km</span></div>' +
+      '<div class="stat"><span class="lbl">Inclination</span><span class="n">' +
+        num(sat.inclination_deg, 1) + '&deg;</span></div>' +
+      '<div class="stat"><span class="lbl">Period</span><span class="n">' +
+        num(sat.period_min, 1) + ' m</span></div>' +
+      '<div class="stat"><span class="lbl">Elev @ KJSSE</span><span class="n" style="color:' +
+        (visible ? C.good : C.muted) + '">' + num(look.el, 1) + '&deg;</span></div>' +
+    '</div>' +
+
+    '<div class="lbl" style="margin-top:14px">[&nbsp;Modes flown&nbsp;]</div>' +
+    '<div class="chips">' + (modeChips || '<div class="chip off"><span class="m">unknown</span></div>') + '</div>' +
+
+    '<div class="lbl" style="margin-top:16px">[&nbsp;From the ground station&nbsp;]</div>' +
+    '<div class="kv"><span class="k">Slant range</span><span class="v">' +
+      num(look.range, 0) + ' km</span></div>' +
+    nextLine +
+    '<div class="lbl" style="margin-top:12px;line-height:1.5">Real orbit, propagated from a ' +
+      'published element set. This satellite is flight heritage for the modes the mission ' +
+      'proposes &mdash; it is not part of SomaiyaSat.</div>';
+
+  panel.querySelector(".panel-close").addEventListener("click", function(){ deselect(); });
+  panel.classList.add("open");
+}
+
 function renderPanel(sat){
+  if (sat.real) return renderRealPanel(sat);
   var elig = eligibility(sat);
   var counts = {};
   PAYLOADS.forEach(function(p){ counts[p.payload_type] = p.packet_count; });
@@ -676,13 +967,13 @@ function renderPanel(sat){
   panel.classList.add("open");
 }
 
-function select(cubeId, fly){
-  var sat = byCube(cubeId);
+function select(uid, fly){
+  var sat = bySat(uid);
   if (!sat) return;
-  selected = cubeId;
-  SATS.forEach(function(s){ if (s._el) s._el.classList.toggle("selected", s.cube_id === cubeId); });
+  selected = uid;
+  ALL_SATS.forEach(function(s){ if (s._el) s._el.classList.toggle("selected", s.uid === uid); });
   Array.prototype.forEach.call(document.querySelectorAll(".card"), function(c){
-    c.classList.toggle("selected", c.getAttribute("data-cube") === cubeId);
+    c.classList.toggle("selected", c.getAttribute("data-cube") === uid);
   });
   renderPanel(sat);
   if (fly !== false){
@@ -694,7 +985,7 @@ function select(cubeId, fly){
 function deselect(){
   selected = null;
   panel.classList.remove("open");
-  SATS.forEach(function(s){ if (s._el) s._el.classList.remove("selected"); });
+  ALL_SATS.forEach(function(s){ if (s._el) s._el.classList.remove("selected"); });
   Array.prototype.forEach.call(document.querySelectorAll(".card"), function(c){
     c.classList.remove("selected");
   });
@@ -725,7 +1016,29 @@ cards.innerHTML = SATS.map(function(s){
       '<span class="k">Next pass</span></div>' +
     '<div class="countdown" data-next="' + esc(s.next_pass || "") + '">&mdash;</div>' +
   '</div>';
-}).join("");
+}).join("") +
+
+/* Real satellites get their own cards, visually separated so nobody reads a
+   tracked object as part of the mission. These carry orbital facts, not
+   telemetry -- we do not have telemetry for someone else's spacecraft. */
+(TRACKED.length
+  ? '<div class="card-sep">[&nbsp;Real satellites &middot; SGP4&nbsp;]</div>' +
+    TRACKED.map(function(s){
+      return '<div class="card glass card-real" data-cube="' + esc(s.uid) + '">' +
+        '<div class="card-top"><span class="card-id">' + esc(s.name) + '</span>' +
+          '<span class="card-link" style="color:' + s.colour + '">' +
+          (s.next_link === null || s.next_link === undefined
+             ? '&mdash;' : 'link ' + esc(s.next_link)) + '</span></div>' +
+        '<div class="card-row"><span class="k">NORAD</span>' +
+          '<span class="v">' + esc(s.norad_id) + '</span></div>' +
+        '<div class="card-row"><span class="k">Modes</span>' +
+          '<span class="v" style="font-size:.66rem">' + esc(s.modes) + '</span></div>' +
+        '<div class="card-row" style="margin-top:9px;border-top:1px solid rgba(255,255,255,.07);padding-top:8px">' +
+          '<span class="k">Next pass</span></div>' +
+        '<div class="countdown" data-next="' + esc(s.next_aos || "") + '">&mdash;</div>' +
+      '</div>';
+    }).join("")
+  : "");
 
 Array.prototype.forEach.call(cards.querySelectorAll(".card"), function(c){
   c.addEventListener("click", function(){ select(c.getAttribute("data-cube"), true); });
@@ -740,20 +1053,57 @@ function ticker(){
     two(now.getUTCHours()) + ":" + two(now.getUTCMinutes()) + ":" + two(now.getUTCSeconds()) +
     "&nbsp;<span>UTC</span>";
 
-  Array.prototype.forEach.call(document.querySelectorAll(".countdown"), function(node){
+  /* [data-next] rather than .countdown, so the detail panel's next-pass row
+     counts down too and not just the cards. */
+  Array.prototype.forEach.call(document.querySelectorAll("[data-next]"), function(node){
+    var big = node.classList.contains("countdown");
     var iso = node.getAttribute("data-next");
     if (!iso){ node.innerHTML = "not scheduled"; node.style.color = C.muted;
-               node.style.fontSize = ".7rem"; return; }
+               if (big) node.style.fontSize = ".7rem"; return; }
     var delta = Math.floor((new Date(iso).getTime() - now.getTime()) / 1000);
     if (delta <= 0){ node.textContent = "PASS WINDOW OPEN"; node.style.color = C.good;
-                     node.style.fontSize = ".72rem"; return; }
+                     if (big) node.style.fontSize = ".72rem"; return; }
     var h = Math.floor(delta / 3600), m = Math.floor(delta % 3600 / 60), s = delta % 60;
     node.textContent = "T− " + two(h) + ":" + two(m) + ":" + two(s);
     node.style.color = "#ffffff";
-    node.style.fontSize = ".92rem";
+    if (big) node.style.fontSize = ".92rem";
   });
   setTimeout(ticker, 1000);
 }
+
+/* ------------------------------------------------------------------ speed */
+/* The default is 1x, which means the real satellites are where they really
+   are. Faster settings are still real physics -- SGP4 evaluated at a future
+   instant -- but the badge makes sure nobody reads a fast-forwarded position
+   as a live one. */
+(function(){
+  var box = document.getElementById("speed");
+  var badge = document.getElementById("ffwd");
+  SPEEDS.forEach(function(v){
+    var b = document.createElement("button");
+    b.textContent = v === 1 ? "live" : v + "×";
+    b.className = (v === SPEED) ? "on" : "";
+    b.addEventListener("click", function(){
+      /* The accumulator carries the displayed instant across the change, so
+         nothing teleports. Selecting "live" snaps back to the real present,
+         which is what live has to mean. */
+      SPEED = v;
+      lastFrame = Date.now();
+      if (SPEED === 1) simNowMs = Date.now();
+      Array.prototype.forEach.call(box.querySelectorAll("button"), function(x){
+        x.classList.remove("on");
+      });
+      b.classList.add("on");
+      badge.classList.toggle("on", SPEED !== 1);
+      badge.textContent = "FAST-FORWARD ×" + SPEED;
+    });
+    box.insertBefore(b, badge);
+  });
+  if (!TRACKED.length){
+    /* Nothing real to propagate: the control would imply otherwise. */
+    box.style.display = "none";
+  }
+})();
 
 /* ------------------------------------------------------------------ boot */
 document.getElementById("roletext").textContent = ROLE || "not connected";

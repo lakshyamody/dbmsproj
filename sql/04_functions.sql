@@ -516,3 +516,91 @@ BEGIN
     RETURN v_inserted;
 END;
 $$;
+
+
+-- ===========================================================================
+-- link_score_from_pass : real pass geometry -> the 0-100 link score the rest
+-- of the schema already speaks.
+--
+-- ground_pass.max_link_score was authored by hand for the proposed mission.
+-- For a REAL pass we can compute it, because the two things that dominate a
+-- LEO amateur link are both measurable from the pass geometry:
+--
+--   1. Free-space path loss rises with the square of slant range. In decibels
+--      that is 20*log10(range / 500 km), taking 500 km as the reference for a
+--      typical LEO satellite passing overhead.
+--
+--   2. Near the horizon the signal crosses much more atmosphere and is far
+--      more likely to be blocked by buildings or terrain. Atmospheric air mass
+--      goes as 1/sin(elevation), and the excess loss is modelled as
+--      10*log10(1 / sin(elevation)) dB.
+--
+-- The two losses are summed and mapped linearly onto 0-100 across a 30 dB
+-- span. That calibration is deliberate: it places a marginal 10-degree pass
+-- just above the 40-point safe-mode threshold used by plan_pass(), and drops
+-- anything lower into safe mode -- so the rule that was invented for the demo
+-- turns out to trigger on exactly the passes a real operator would distrust.
+--
+-- IMMUTABLE: same inputs always give the same score, so the planner may
+-- inline it and it is safe in an index or a generated column.
+-- ===========================================================================
+CREATE OR REPLACE FUNCTION link_score_from_pass(
+    p_max_elevation_deg NUMERIC,
+    p_range_km          NUMERIC
+)
+RETURNS INT
+LANGUAGE sql
+IMMUTABLE
+AS $$
+    -- The ::NUMERIC casts are required, not cosmetic: PostgreSQL's two-argument
+    -- log(base, x) is defined for NUMERIC, while sin() and radians() return
+    -- DOUBLE PRECISION, so the air-mass term has to be cast back.
+    SELECT GREATEST(0, LEAST(100, ROUND(
+        100 - (
+              -- free-space path loss, dB relative to a 500 km overhead pass
+              20 * log(10, (GREATEST(COALESCE(p_range_km, 500), 1) / 500.0)::NUMERIC)
+              -- excess atmospheric / obstruction loss near the horizon, dB
+            + 10 * log(10, (1 / GREATEST(
+                                sin(radians(GREATEST(COALESCE(p_max_elevation_deg, 0), 1.0)::FLOAT8)),
+                                0.01))::NUMERIC)
+        ) * (100.0 / 30.0)
+    )))::INT;
+$$;
+
+
+-- ===========================================================================
+-- next_tracked_pass : the next real pass for one satellite over one station.
+--
+-- A small convenience wrapper the Live Tracking page uses for its countdown.
+-- STABLE rather than IMMUTABLE because it reads tables and depends on now().
+-- ===========================================================================
+CREATE OR REPLACE FUNCTION next_tracked_pass(
+    p_norad_id   INT,
+    p_station_id VARCHAR(10) DEFAULT 'KJSSE'
+)
+RETURNS TABLE (
+    track_id          INT,
+    aos_utc           TIMESTAMPTZ,
+    los_utc           TIMESTAMPTZ,
+    seconds_until_aos INT,
+    duration_s        INT,
+    max_elevation_deg NUMERIC(4,1),
+    max_link_score    INT
+)
+LANGUAGE sql
+STABLE
+AS $$
+    SELECT  p.track_id,
+            p.aos_utc,
+            p.los_utc,
+            EXTRACT(EPOCH FROM (p.aos_utc - now()))::INT,
+            EXTRACT(EPOCH FROM (p.los_utc - p.aos_utc))::INT,
+            p.max_elevation_deg,
+            p.max_link_score
+    FROM    tracked_pass p
+    WHERE   p.norad_id   = p_norad_id
+      AND   p.station_id = p_station_id
+      AND   p.los_utc    > now()
+    ORDER BY p.aos_utc
+    LIMIT 1;
+$$;

@@ -8,6 +8,9 @@
 -- ============================================================================
 
 -- Idempotent: tear down in reverse dependency order before rebuilding.
+DROP TABLE IF EXISTS tracked_pass    CASCADE;
+DROP TABLE IF EXISTS satellite_tle   CASCADE;
+DROP TABLE IF EXISTS ground_station  CASCADE;
 DROP TABLE IF EXISTS deployment_log  CASCADE;
 DROP TABLE IF EXISTS ground_pass     CASCADE;
 DROP TABLE IF EXISTS telemetry       CASCADE;
@@ -99,4 +102,102 @@ CREATE TABLE deployment_log (
     action    VARCHAR(50),
     outcome   VARCHAR(20),
     logged_at TIMESTAMP DEFAULT now()
+);
+
+
+-- ===========================================================================
+-- REAL SATELLITE TRACKING
+--
+-- Everything above models the PROPOSED SomaiyaSat mission. The three tables
+-- below hold real orbital data for satellites that are actually in orbit now.
+--
+-- Why both: SomaiyaSat has not launched, so it has no orbit to track. A real
+-- mission validates its ground segment against satellites already flying
+-- before its own launch, and that is exactly what these tables let the
+-- dashboard do -- the same link-budget reasoning, run over real pass windows.
+--
+-- Note the timestamp type changes here: TIMESTAMPTZ, not TIMESTAMP. Orbital
+-- mechanics is done in UTC, and storing UTC instants in a naive TIMESTAMP
+-- column on a server running in IST would silently shift every pass by 5h30m.
+-- ===========================================================================
+
+-- ---------------------------------------------------------------------------
+-- ground_station : the ground segment, as data.
+--
+-- These six sites previously existed only as a Python literal in
+-- scripts/export_stats.py, duplicated again in landing/src/hooks/useStats.ts.
+-- Real pass prediction needs a station's latitude, longitude, altitude and
+-- horizon mask, so the list belongs in the database and is now read from here.
+-- ---------------------------------------------------------------------------
+CREATE TABLE ground_station (
+    station_id        VARCHAR(10)  PRIMARY KEY,
+    name              VARCHAR(60)  NOT NULL,
+    country           VARCHAR(60),
+    latitude          NUMERIC(8,5) NOT NULL CHECK (latitude  BETWEEN  -90 AND  90),
+    longitude         NUMERIC(9,5) NOT NULL CHECK (longitude BETWEEN -180 AND 180),
+    altitude_m        INT          NOT NULL DEFAULT 0,
+    -- A pass is only usable once the satellite clears local obstructions.
+    -- 10 degrees is the usual amateur-station rule of thumb.
+    min_elevation_deg NUMERIC(4,1) NOT NULL DEFAULT 10.0
+                      CHECK (min_elevation_deg BETWEEN 0 AND 90),
+    is_primary        BOOLEAN      NOT NULL DEFAULT FALSE
+);
+
+-- ---------------------------------------------------------------------------
+-- satellite_tle : real two-line element sets, fetched from CelesTrak.
+--
+-- norad_id is the natural key assigned by US Space Command, which is what
+-- makes a re-fetch an UPSERT (INSERT ... ON CONFLICT DO UPDATE) rather than a
+-- duplicate -- see scripts/fetch_tles.py.
+--
+-- The TLE lines are stored verbatim as CHAR(69) because the format is
+-- column-positional: character 19-32 is the epoch, 9-16 on line 2 is the
+-- inclination, and so on. Trimming or reformatting them breaks the propagator.
+-- ---------------------------------------------------------------------------
+CREATE TABLE satellite_tle (
+    norad_id        INT          PRIMARY KEY,
+    object_name     VARCHAR(60)  NOT NULL,
+    tle_line1       CHAR(69)     NOT NULL,
+    tle_line2       CHAR(69)     NOT NULL,
+    epoch_utc       TIMESTAMPTZ  NOT NULL,
+    inclination_deg NUMERIC(6,3),
+    mean_motion     NUMERIC(12,8),          -- revolutions per day
+    period_min      NUMERIC(8,3),           -- 1440 / mean_motion
+    eccentricity    NUMERIC(9,7),
+    -- Which of our four payload modes this satellite actually flies. This is
+    -- why these particular birds were chosen: they are the flight heritage
+    -- behind the modes KJS-SRS-01 proposes.
+    payload_modes   VARCHAR(60),
+    source          VARCHAR(40)  NOT NULL DEFAULT 'celestrak:amateur',
+    fetched_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    CONSTRAINT chk_tle_line1 CHECK (tle_line1 LIKE '1 %'),
+    CONSTRAINT chk_tle_line2 CHECK (tle_line2 LIKE '2 %')
+);
+
+-- ---------------------------------------------------------------------------
+-- tracked_pass : a REAL visibility window, computed by SGP4.
+--
+-- One row per (satellite, station, pass). Compare with ground_pass above,
+-- which holds the proposed mission's windows: that table has no station
+-- column because it implicitly means "over Somaiya", and no elevation because
+-- its link scores were authored rather than computed. Here both are real.
+--
+-- The UNIQUE constraint is what makes re-running the predictor idempotent:
+-- recomputing the same window updates it instead of inserting a duplicate.
+-- ---------------------------------------------------------------------------
+CREATE TABLE tracked_pass (
+    track_id          SERIAL       PRIMARY KEY,
+    norad_id          INT          NOT NULL REFERENCES satellite_tle(norad_id)  ON DELETE CASCADE,
+    station_id        VARCHAR(10)  NOT NULL REFERENCES ground_station(station_id) ON DELETE CASCADE,
+    aos_utc           TIMESTAMPTZ  NOT NULL,   -- acquisition of signal
+    los_utc           TIMESTAMPTZ  NOT NULL,   -- loss of signal
+    max_elevation_deg NUMERIC(4,1) NOT NULL CHECK (max_elevation_deg BETWEEN 0 AND 90),
+    range_km_at_max   NUMERIC(8,1),
+    -- Derived from the two columns above by link_score_from_pass(), so it is
+    -- on the same 0-100 scale as comm_router.link_score and can drive the
+    -- very same safe-mode rule in plan_pass().
+    max_link_score    INT          NOT NULL CHECK (max_link_score BETWEEN 0 AND 100),
+    computed_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    CONSTRAINT chk_track_window CHECK (los_utc > aos_utc),
+    CONSTRAINT uq_tracked_pass  UNIQUE (norad_id, station_id, aos_utc)
 );

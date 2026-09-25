@@ -15,6 +15,10 @@ export function ByTheNumbers({ stats }: { stats: Stats }) {
     { k: "Telemetry packets", v: t.packets, sub: `${t.unsent_packets.toLocaleString()} still queued` },
     { k: "Passes planned", v: t.passes, sub: `across ${t.ground_stations} ground stations` },
     { k: "Payload modes", v: t.payload_modes, sub: "ranked by priority" },
+    // The two below are real, not modelled: live orbital element sets and the
+    // pass windows SGP4 computes from them.
+    { k: "Real satellites tracked", v: t.tracked_objects, sub: "live CelesTrak element sets" },
+    { k: "Real passes computed", v: t.tracked_passes, sub: "SGP4 over the station network" },
   ]
 
   useGSAP(
@@ -39,7 +43,23 @@ export function ByTheNumbers({ stats }: { stats: Stats }) {
         })
       })
 
-      if (reduced) return
+    },
+    // stats.source is the reliable signal that real data has arrived: it goes
+    // "fallback" -> "database" exactly once. Depending on t.packets alone was
+    // not enough -- the fallback snapshot was taken from this same database, so
+    // that number is identical either way, the effect never re-ran, and every
+    // counter animated to its fallback target instead of the fetched one.
+    { scope: root, dependencies: [stats.source, t.packets, t.tracked_objects] }
+  )
+
+  // The card entrance is deliberately a SEPARATE effect with no data
+  // dependency. It is a gsap.from(opacity: 0), so re-running it after its
+  // ScrollTrigger has already been passed re-hides the cards and never plays
+  // them back in -- which is exactly what happened when it shared the effect
+  // above and that effect started re-running on new data.
+  useGSAP(
+    () => {
+      if (prefersReducedMotion()) return
       gsap.from(".counter-card", {
         opacity: 0,
         y: 40,
@@ -49,7 +69,7 @@ export function ByTheNumbers({ stats }: { stats: Stats }) {
         scrollTrigger: { trigger: ".counter-grid", start: "top 90%" },
       })
     },
-    { scope: root, dependencies: [t.packets] }
+    { scope: root, dependencies: [] }
   )
 
   return (
@@ -68,7 +88,7 @@ export function ByTheNumbers({ stats }: { stats: Stats }) {
           Everything on this page is read from the database.
         </h2>
 
-        <div className="counter-grid mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="counter-grid mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {CARDS.map((c) => (
             <Card key={c.k} className="counter-card gap-0 px-7 py-8">
               <span
@@ -88,6 +108,14 @@ export function ByTheNumbers({ stats }: { stats: Stats }) {
           Source: {stats.source === "database" ? "live PostgreSQL" : stats.source} ·
           exported by scripts/export_stats.py
         </p>
+        {t.tracked_objects > 0 && (
+          <p className="mt-3 max-w-[62ch] text-[13px] leading-relaxed text-[#8a8f98]">
+            The first four counters describe the proposed mission. The last two are
+            real: {t.tracked_objects} amateur-radio satellites currently in orbit,
+            propagated from published orbital element sets, whose pass windows the
+            same ground-station software plans against.
+          </p>
+        )}
       </div>
     </section>
   )

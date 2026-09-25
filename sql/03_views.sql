@@ -158,3 +158,94 @@ CREATE VIEW v_payload_mix AS
     GROUP BY    t.sent
 
 ORDER BY bucket_kind, priority NULLS LAST, bucket;
+
+
+-- ===========================================================================
+-- REAL TRACKING VIEWS
+--
+-- The views above summarise the proposed SomaiyaSat mission. These three
+-- summarise the real satellites in satellite_tle / tracked_pass.
+-- ===========================================================================
+
+-- ---------------------------------------------------------------------------
+-- v_tracked_fleet : the real satellites we track, with TLE freshness.
+--
+-- A TLE is a snapshot of an orbit that drifts away from reality over days, so
+-- its AGE is the single most important thing about it. A correlated subquery
+-- counts each object's upcoming passes.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_tracked_fleet AS
+SELECT  t.norad_id,
+        t.object_name,
+        t.payload_modes,
+        ROUND(t.inclination_deg, 2)                                   AS inclination_deg,
+        ROUND(t.period_min, 1)                                        AS period_min,
+        t.eccentricity,
+        t.epoch_utc,
+        ROUND(EXTRACT(EPOCH FROM (now() - t.epoch_utc)) / 86400.0, 2) AS tle_age_days,
+        CASE WHEN now() - t.epoch_utc > INTERVAL '14 days' THEN 'STALE'
+             WHEN now() - t.epoch_utc > INTERVAL '7 days'  THEN 'AGEING'
+             ELSE                                              'FRESH'
+        END                                                           AS tle_status,
+        t.source,
+        (SELECT count(*) FROM tracked_pass p
+          WHERE p.norad_id = t.norad_id AND p.aos_utc > now())        AS upcoming_passes
+FROM    satellite_tle t
+ORDER BY t.object_name;
+
+-- ---------------------------------------------------------------------------
+-- v_next_passes : upcoming REAL passes, soonest first.
+--
+-- A three-way JOIN (pass -> satellite -> station) with the link grade derived
+-- from the very same thresholds plan_pass() applies to the proposed mission.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_next_passes AS
+SELECT  p.track_id,
+        p.norad_id,
+        t.object_name,
+        t.payload_modes,
+        s.station_id,
+        s.name                                              AS station_name,
+        s.country                                           AS station_country,
+        p.aos_utc,
+        p.los_utc,
+        EXTRACT(EPOCH FROM (p.los_utc - p.aos_utc))::INT     AS duration_s,
+        EXTRACT(EPOCH FROM (p.aos_utc - now()))::INT         AS seconds_until_aos,
+        p.max_elevation_deg,
+        p.range_km_at_max,
+        p.max_link_score,
+        CASE WHEN p.max_link_score < 40 THEN 'SAFE MODE - TT&C only'
+             WHEN p.max_link_score < 70 THEN 'REDUCED - SSTV at risk'
+             ELSE                            'FULL - all modes'
+        END                                                  AS link_grade
+FROM      tracked_pass   p
+JOIN      satellite_tle  t ON t.norad_id   = p.norad_id
+JOIN      ground_station s ON s.station_id = p.station_id
+WHERE     p.los_utc > now()
+ORDER BY  p.aos_utc;
+
+-- ---------------------------------------------------------------------------
+-- v_station_workload : how much real contact time each station gets in 24 h.
+--
+-- LEFT JOIN so a station with no passes still appears with zeros rather than
+-- vanishing -- the difference between "no contacts" and "not in the network".
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_station_workload AS
+SELECT  s.station_id,
+        s.name,
+        s.country,
+        s.is_primary,
+        s.min_elevation_deg,
+        count(p.track_id)                                    AS passes_24h,
+        count(DISTINCT p.norad_id)                           AS distinct_objects,
+        ROUND(AVG(p.max_elevation_deg), 1)                   AS avg_max_elevation,
+        MAX(p.max_elevation_deg)                             AS best_elevation,
+        ROUND(AVG(p.max_link_score), 1)                      AS avg_link_score,
+        ROUND(COALESCE(SUM(EXTRACT(EPOCH FROM (p.los_utc - p.aos_utc))), 0) / 60.0, 1)
+                                                             AS contact_minutes
+FROM      ground_station s
+LEFT JOIN tracked_pass   p
+       ON p.station_id = s.station_id
+      AND p.aos_utc BETWEEN now() AND now() + INTERVAL '24 hours'
+GROUP BY  s.station_id, s.name, s.country, s.is_primary, s.min_elevation_deg
+ORDER BY  contact_minutes DESC, s.station_id;

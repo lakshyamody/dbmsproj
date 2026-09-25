@@ -27,7 +27,15 @@ BEGIN
     FOREACH r IN ARRAY ARRAY['ground_operator', 'student_analyst', 'ai_router']
     LOOP
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
-            -- hand anything the role owns back to the bootstrap superuser ...
+            -- REASSIGN OWNED requires the current user to be a MEMBER of the
+            -- role, not merely its creator. A local superuser bypasses that,
+            -- but a managed provider gives you a non-superuser owner (Neon's
+            -- neondb_owner), where a second run of this file would otherwise
+            -- fail with "permission denied to reassign objects". Granting
+            -- membership first works in both cases and is harmless: the role
+            -- is dropped three statements later.
+            EXECUTE format('GRANT %I TO CURRENT_USER', r);
+            -- hand anything the role owns back to the bootstrap user ...
             EXECUTE format('REASSIGN OWNED BY %I TO CURRENT_USER', r);
             -- ... then drop the privileges that were GRANTed to it
             EXECUTE format('DROP OWNED BY %I', r);
@@ -77,11 +85,24 @@ GRANT SELECT ON
     v_low_battery_cubes,
     v_pass_ready,
     v_weak_links,
-    v_payload_mix
+    v_payload_mix,
+    -- the real-tracking views
+    v_tracked_fleet,
+    v_next_passes,
+    v_station_workload
 TO student_analyst;
 
 -- Read-only helpers the dashboards need for their dropdowns / charts.
 GRANT SELECT ON satellite_cube, ground_pass, payload_priority TO student_analyst;
+
+-- Real orbital data is public information (CelesTrak publishes it), so the
+-- analyst may read it. Writing it is another matter: refreshing a TLE or
+-- recomputing a pass is an operator action, and the INSERT is refused here
+-- exactly as it is on telemetry.
+GRANT SELECT ON ground_station, satellite_tle, tracked_pass TO student_analyst;
+
+GRANT EXECUTE ON FUNCTION link_score_from_pass(NUMERIC, NUMERIC) TO student_analyst;
+GRANT EXECUTE ON FUNCTION next_tracked_pass(INT, VARCHAR)        TO student_analyst;
 
 -- plan_pass is a pure read; let the analyst SEE the router's reasoning.
 -- execute_pass is deliberately NOT granted: planning is safe, executing is not.

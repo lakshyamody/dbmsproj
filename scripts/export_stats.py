@@ -114,8 +114,67 @@ def from_database() -> dict:
             ORDER  BY cube_id, hour
             """
         )
+
+        # ------------------------------------------------------------ real data
+        # The tracked fleet: real satellites with their element sets, so the
+        # globe can propagate them in the browser using the same SGP4 the
+        # database used. Nothing here is invented -- see scripts/fetch_tles.py.
+        tracked = rows(
+            """
+            SELECT t.norad_id, t.object_name, t.payload_modes, t.tle_line1,
+                   t.tle_line2, t.epoch_utc, t.inclination_deg, t.period_min,
+                   f.tle_age_days, f.tle_status,
+                   (SELECT p.aos_utc FROM tracked_pass p
+                     WHERE p.norad_id = t.norad_id AND p.station_id = 'KJSSE'
+                       AND p.los_utc > now() ORDER BY p.aos_utc LIMIT 1) AS next_aos,
+                   (SELECT p.max_link_score FROM tracked_pass p
+                     WHERE p.norad_id = t.norad_id AND p.station_id = 'KJSSE'
+                       AND p.los_utc > now() ORDER BY p.aos_utc LIMIT 1) AS next_link
+            FROM   satellite_tle t
+            JOIN   v_tracked_fleet f ON f.norad_id = t.norad_id
+            ORDER  BY t.object_name
+            """
+        )
+
+        tracked_passes = rows(
+            """
+            SELECT track_id, norad_id, object_name, station_id, station_name,
+                   aos_utc, los_utc, duration_s, max_elevation_deg,
+                   range_km_at_max, max_link_score, link_grade
+            FROM   v_next_passes
+            ORDER  BY aos_utc
+            LIMIT  60
+            """
+        )
+
+        # Ground stations now live in the database (they used to be a literal
+        # in this file). Real pass prediction needs their coordinates and
+        # horizon masks, so they are data, and this is where the UI reads them.
+        station_rows = rows(
+            """
+            SELECT station_id, name, country, latitude, longitude, altitude_m,
+                   min_elevation_deg, is_primary
+            FROM   ground_station
+            -- KJSSE leads: it is the mission's own station, so it is the one
+            -- the globe centres on and the one the UI treats as "home".
+            -- Sorting on is_primary alone would put Helsinki first (both are
+            -- primary, and 'HEL' < 'KJSSE').
+            ORDER  BY (station_id = 'KJSSE') DESC, is_primary DESC, station_id
+            """
+        )
     finally:
         conn.close()
+
+    stations = [{
+        "id": s["station_id"],
+        "name": s["name"],
+        "country": s["country"],
+        "lat": float(s["latitude"]),
+        "lng": float(s["longitude"]),
+        "alt_m": int(s["altitude_m"]),
+        "min_elevation_deg": float(s["min_elevation_deg"]),
+        "primary": bool(s["is_primary"]),
+    } for s in station_rows] or STATIONS
 
     by_cube_health = {h["cube_id"]: h for h in health}
     spark_by_cube: dict[str, list[float]] = {}
@@ -183,7 +242,37 @@ def from_database() -> dict:
             "max_link_score": int(p["max_link_score"] or 0),
             "duration_s": int(p["duration_s"] or 0),
         } for p in passes],
-        "stations": STATIONS,
+        "stations": stations,
+        # Real satellites, kept in their own key so nothing that reads
+        # `satellites` can confuse a tracked object with the proposed mission.
+        "tracked": [{
+            "norad_id": int(t["norad_id"]),
+            "object_name": t["object_name"],
+            "payload_modes": t["payload_modes"],
+            "tle_line1": t["tle_line1"].strip(),
+            "tle_line2": t["tle_line2"].strip(),
+            "epoch_utc": iso(t["epoch_utc"]),
+            "inclination_deg": float(t["inclination_deg"] or 0),
+            "period_min": float(t["period_min"] or 0),
+            "tle_age_days": float(t["tle_age_days"] or 0),
+            "tle_status": t["tle_status"],
+            "next_aos": iso(t["next_aos"]) if t.get("next_aos") else None,
+            "next_link": int(t["next_link"]) if t.get("next_link") is not None else None,
+        } for t in tracked],
+        "tracked_passes": [{
+            "track_id": int(p["track_id"]),
+            "norad_id": int(p["norad_id"]),
+            "object_name": p["object_name"],
+            "station_id": p["station_id"],
+            "station_name": p["station_name"],
+            "aos_utc": iso(p["aos_utc"]),
+            "los_utc": iso(p["los_utc"]),
+            "duration_s": int(p["duration_s"] or 0),
+            "max_elevation_deg": float(p["max_elevation_deg"] or 0),
+            "range_km_at_max": float(p["range_km_at_max"] or 0),
+            "max_link_score": int(p["max_link_score"] or 0),
+            "link_grade": p["link_grade"],
+        } for p in tracked_passes],
         "totals": {
             "satellites": int(totals["cubes"]),
             "deployed_satellites": sum(1 for s in sats if s["deployed"]),
@@ -193,7 +282,9 @@ def from_database() -> dict:
             "passes": int(totals["passes"]),
             "payload_modes": len(payloads),
             "total_bytes": int(totals["bytes"]),
-            "ground_stations": len(STATIONS),
+            "ground_stations": len(stations),
+            "tracked_objects": len(tracked),
+            "tracked_passes": len(tracked_passes),
         },
     }
 
@@ -300,6 +391,12 @@ def from_mock() -> dict:
         "payloads": payloads,
         "passes": passes,
         "stations": STATIONS,
+        # Deliberately empty, not faked. Real orbital data cannot be invented:
+        # a made-up TLE would propagate to a real-looking position that is
+        # simply wrong. Without a database the globe shows the proposed mission
+        # only, and the tracking panel says so.
+        "tracked": [],
+        "tracked_passes": [],
         "totals": {
             "satellites": 4,
             "deployed_satellites": 3,
@@ -310,6 +407,8 @@ def from_mock() -> dict:
             "payload_modes": len(payloads),
             "total_bytes": sum(p["total_bytes"] for p in payloads),
             "ground_stations": len(STATIONS),
+            "tracked_objects": 0,
+            "tracked_passes": 0,
         },
     }
 

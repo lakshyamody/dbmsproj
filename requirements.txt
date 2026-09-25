@@ -3,3 +3,7 @@ streamlit>=1.30
 pandas>=2.0
 plotly>=5.18
 python-dotenv>=1.0
+# SGP4 orbit propagator. Turns the two-line element sets in satellite_tle into
+# real positions and pass windows -- see scripts/_orbit.py. The browser uses the
+# equivalent satellite.js, vendored at app/static/vendor/satellite.min.js.
+sgp4>=2.20

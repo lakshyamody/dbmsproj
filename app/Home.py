@@ -120,9 +120,15 @@ if totals:
     m[2].metric("Ground stations", totals.get("ground_stations", "—"))
     m[3].metric("Packets buffered", f"{totals.get('packets', 0):,}")
     m[4].metric("Queued for downlink", f"{totals.get('unsent_packets', 0):,}")
+    n_tracked = totals.get("tracked_objects", 0)
     st.caption(
-        f"Orbit tracks are a simulated sun-synchronous profile. Spacecraft "
-        f"figures come from `app/data/stats.json` "
+        f"**CUBE01–03 are the proposed mission** — not in orbit, so their tracks "
+        f"are an analytic sun-synchronous model. "
+        + (f"The **{n_tracked} hollow markers are real satellites**, propagated "
+           f"from live CelesTrak element sets with SGP4 — see Live Tracking. "
+           if n_tracked else
+           "No real element sets loaded; run `python scripts/fetch_tles.py`. ")
+        + f"Figures come from `app/data/stats.json` "
         f"(source: `{stats.get('source', '?')}`) — regenerate with "
         f"`python scripts/export_stats.py`."
     )

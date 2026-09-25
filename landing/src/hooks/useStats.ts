@@ -72,6 +72,23 @@ export interface Totals {
   payload_modes: number
   total_bytes: number
   ground_stations: number
+  /** Real satellites tracked from live CelesTrak element sets. */
+  tracked_objects: number
+  /** Real pass windows computed by SGP4 over the station network. */
+  tracked_passes: number
+}
+
+/** A real satellite in orbit now -- not part of the proposed mission. */
+export interface TrackedObject {
+  norad_id: number
+  object_name: string
+  payload_modes: string | null
+  inclination_deg: number
+  period_min: number
+  tle_age_days: number
+  tle_status: "FRESH" | "AGEING" | "STALE"
+  next_aos: string | null
+  next_link: number | null
 }
 
 export interface Stats {
@@ -81,6 +98,7 @@ export interface Stats {
   payloads: Payload[]
   passes: GroundPass[]
   stations: Station[]
+  tracked: TrackedObject[]
   totals: Totals
 }
 
@@ -135,10 +153,14 @@ export const FALLBACK_STATS: Stats = {
     { id: "SGP", name: "Singapore", country: "Singapore", lat: 1.35, lng: 103.82, primary: false },
     { id: "SNT", name: "Santiago", country: "Chile", lat: -33.45, lng: -70.67, primary: false },
   ],
+  // Empty, not faked: a made-up element set would propagate to a real-looking
+  // position that is simply wrong.
+  tracked: [],
   totals: {
     satellites: 4, deployed_satellites: 3, pods: 4, packets: 4998,
     unsent_packets: 1004, passes: 9, payload_modes: 4,
     total_bytes: 38832593, ground_stations: 6,
+    tracked_objects: 0, tracked_passes: 0,
   },
 }
 

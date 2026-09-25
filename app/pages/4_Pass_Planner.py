@@ -242,8 +242,12 @@ with st.expander("Compare CUBE01 vs CUBE02 vs CUBE03 side by side", expanded=Tru
                 continue
 
             link = int(cube_budget["max_link_score"])
+            # latest_v is None when a cube has no telemetry at all. That is a
+            # real state -- plan_pass() handles it explicitly by falling back to
+            # safe mode -- so report it rather than crashing on float(None).
+            battery = "no telemetry" if latest_v is None else f"{float(latest_v):.2f} V"
             st.markdown(
-                f"Battery **{float(latest_v):.2f} V** · link **{link}**  \n"
+                f"Battery **{battery}** · link **{link}**  \n"
                 f"Budget **{int(cube_budget['budget_bytes']):,}** bytes"
             )
 

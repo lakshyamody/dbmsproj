@@ -34,6 +34,9 @@ cp .env.example .env         # then edit PGPASSWORD and the three role passwords
 python scripts/setup_db.py            # drops & recreates space_deploy, runs sql/01–05
 python scripts/generate_telemetry.py  # ~5000 telemetry packets over the last 7 days
 
+python scripts/fetch_tles.py          # real orbital elements from CelesTrak
+python scripts/predict_passes.py      # SGP4 → real pass windows over the stations
+
 cd landing && npm install && cd ..    # landing-page dependencies (one time)
 python scripts/prepare_assets.py      # NASA Earth textures + land mask (one time)
 
@@ -77,6 +80,64 @@ drops it at runtime so the before/after comparison is live.
 > **Password authentication must actually be enforced**, or the login screen proves
 > nothing. Check that `pg_hba.conf` uses `scram-sha-256` (not `trust`) for the
 > `host … 127.0.0.1/32` and `host … ::1/128` lines, then `SELECT pg_reload_conf();`.
+
+---
+
+## Real satellite tracking
+
+SomaiyaSat has not launched, so it has no orbit to track. What a real mission does
+before its own launch is validate the ground segment against satellites that are
+already flying — and that is what the tracking half of this project does.
+
+`scripts/fetch_tles.py` downloads current two-line element sets from
+[CelesTrak](https://celestrak.org/) for ten amateur-radio satellites and **UPSERTs**
+them into `satellite_tle`. `scripts/predict_passes.py` propagates them with SGP4 and
+writes real visibility windows into `tracked_pass`. Neither invents anything: the
+orbits, the pass times and the elevations are real.
+
+Why these ten. Each is flight heritage for something KJS-SRS-01 proposes:
+
+| Satellite | NORAD | Relevance |
+|---|---|---|
+| **LILACSAT-2** | 40908 | flew an amateur **Codec2** digital-voice transponder |
+| **ISS (ZARYA)** | 25544 | ARISS transmits real **SSTV** from it |
+| FUNCUBE-1 (AO-73) | 39444 | long-running amateur telemetry beacon + transponder |
+| OSCAR 7 (AO-7) | 7530 | the oldest amateur satellite still worked |
+| SO-50, AO-27, BEESAT-1, UWE-4, SONATE-2, MESAT1 | — | university CubeSats in the same orbital regime |
+
+**Note what is missing: none of them flies M17.** That gap is visible in the
+`payload_modes` column rather than merely asserted in a write-up — it is the novelty
+the use case is aimed at.
+
+### Where the link score comes from
+
+`ground_pass.max_link_score` was authored by hand for the proposed mission. For a real
+pass it is **computed**, by `link_score_from_pass(elevation, range)` in
+`sql/04_functions.sql`, from the two effects that dominate a LEO amateur link:
+
+- free-space path loss, rising with the square of slant range → `20·log₁₀(range / 500 km)` dB
+- extra atmosphere and obstruction near the horizon → `10·log₁₀(1 / sin(elevation))` dB
+
+summed and mapped onto 0–100 across a 30 dB span. That calibration puts a marginal 10°
+pass just above the 40-point safe-mode threshold `plan_pass()` already used — so a rule
+invented for the demo turns out to fire on exactly the passes a real operator distrusts.
+Both halves of the project therefore speak the same 0–100 scale.
+
+### Offline safety
+
+`fetch_tles.py` is the **only** thing in the project that touches the internet, and it
+runs ahead of time. It caches every download under `data/tle_cache/` and stores the
+elements in the database, so the dashboard itself still makes zero external requests.
+`python scripts/fetch_tles.py --offline` reloads from that cache with no network at all.
+
+The browser propagates with `satellite.js`, vendored at
+`app/static/vendor/satellite.min.js` alongside `globe.gl`. It agrees with the Python
+`sgp4` the database uses to within **0.00004°**, so the globe and the tables never
+disagree.
+
+> **A TLE goes stale.** It is a snapshot of an orbit that drifts away from reality over
+> days, which is why `v_tracked_fleet` grades every element set FRESH / AGEING / STALE by
+> age. Re-run `fetch_tles.py` and `predict_passes.py` before a demo.
 
 ---
 
@@ -269,13 +330,72 @@ erDiagram
 `deployment_log` is an audit table on purpose — it has no foreign keys, so a row about a
 **failed** deployment survives even if the pod it refers to was never confirmed.
 
+### Real tracking
+
+Three further tables hold real orbital data. They are deliberately separate from the
+mission tables above: `ground_pass` is the *proposed* mission's windows, `tracked_pass`
+is real ones, and nothing joins a real satellite to a `satellite_cube`.
+
+```mermaid
+erDiagram
+    satellite_tle  ||--o{ tracked_pass : "propagates to"
+    ground_station ||--o{ tracked_pass : "observes"
+
+    ground_station {
+        varchar station_id PK
+        varchar name "NOT NULL"
+        varchar country
+        numeric latitude "CHECK -90..90"
+        numeric longitude "CHECK -180..180"
+        int     altitude_m
+        numeric min_elevation_deg "horizon mask, DEFAULT 10"
+        boolean is_primary
+    }
+    satellite_tle {
+        int         norad_id PK "catalogue number - the UPSERT key"
+        varchar     object_name "NOT NULL"
+        char        tle_line1 "CHECK LIKE '1 %'"
+        char        tle_line2 "CHECK LIKE '2 %'"
+        timestamptz epoch_utc "NOT NULL"
+        numeric     inclination_deg
+        numeric     mean_motion
+        numeric     period_min
+        numeric     eccentricity
+        varchar     payload_modes
+        varchar     source
+        timestamptz fetched_at
+    }
+    tracked_pass {
+        serial      track_id PK
+        int         norad_id FK
+        varchar     station_id FK
+        timestamptz aos_utc "acquisition of signal"
+        timestamptz los_utc "loss of signal"
+        numeric     max_elevation_deg "CHECK 0-90"
+        numeric     range_km_at_max
+        int         max_link_score "from link_score_from_pass()"
+        timestamptz computed_at
+        varchar     UQ "UNIQUE (norad_id, station_id, aos_utc)"
+    }
+```
+
+Two details worth noticing:
+
+- **`TIMESTAMPTZ`, not `TIMESTAMP`.** Orbital mechanics is done in UTC. Storing a UTC
+  instant in the naive `TIMESTAMP` columns the mission tables use would silently shift
+  every pass by 5h30m on a server running in IST.
+- **`ground_station` is new as a table, not as data.** Those six sites previously existed
+  only as a Python literal, duplicated again in TypeScript. Real pass prediction needs
+  their coordinates and horizon masks, so they are data now and both front ends read them
+  from here.
+
 ---
 
 ## Feature → SQL concept map
 
 | Feature (where to see it) | SQL concept | Where in the code | Exp | CO |
 |---|---|---|---|---|
-| 7 tables, PK/FK, CHECK, UNIQUE, NOT NULL | **DDL**, integrity constraints | `sql/01_schema.sql` | 3 | CO1 |
+| 10 tables, PK/FK, CHECK, UNIQUE, NOT NULL | **DDL**, integrity constraints | `sql/01_schema.sql` | 3 | CO1 |
 | Seed pods / cubes / routers / passes | **DML** — INSERT, TRUNCATE | `sql/02_seed.sql` | 4 | CO1 |
 | Telemetry Log filters & pagination | **DML** — SELECT, WHERE, ORDER BY, LIMIT/OFFSET | `app/pages/2_Telemetry_Log.py` | 4 | CO1 |
 | Mission status chain | **3-way JOIN** + CASE | `v_mission_status` | 6 | CO3 |
@@ -291,8 +411,26 @@ erDiagram
 | Three roles, grants & denials | **DCL** — CREATE ROLE, GRANT, REVOKE | `sql/05_roles.sql` | 7 | CO2 |
 | Analyst can plan but not execute | **DCL** — SECURITY DEFINER | `plan_pass()`, `sql/05_roles.sql` | 7 | CO2 |
 | Before/after EXPLAIN ANALYZE | **Indexing** — composite B-tree | `sql/06_indexes.sql` | 8 | CO3 |
+| Loading real orbital elements | **UPSERT** — `INSERT … ON CONFLICT DO UPDATE` with a guard | `scripts/fetch_tles.py` | 4 | CO1 |
+| Element-set freshness | **Correlated subquery** + CASE over an interval | `v_tracked_fleet` | 6 | CO3 |
+| Next real passes | **3-way JOIN** across pass → satellite → station | `v_next_passes` | 6 | CO3 |
+| Station contact time | **LEFT JOIN + GROUP BY** aggregates | `v_station_workload` | 5 | CO2 |
+| Link score from pass geometry | **IMMUTABLE SQL function** | `link_score_from_pass()` | 6 | CO3 |
 
 Each page also carries a sidebar note naming the concept and the matching experiment/CO.
+
+The UPSERT is worth singling out. Re-fetching sends the same ten satellites every time,
+but writes only the ones whose epoch actually moved:
+
+```sql
+INSERT INTO satellite_tle (...) VALUES (...)
+ON CONFLICT (norad_id) DO UPDATE SET ...
+WHERE EXCLUDED.epoch_utc > satellite_tle.epoch_utc;
+```
+
+The `WHERE` on the `DO UPDATE` refuses to overwrite a newer element set with an older
+one — which genuinely happens when two CelesTrak groups are merged in a single run.
+Without it, load order would silently decide your orbits.
 
 ---
 
@@ -384,15 +522,19 @@ Use **Generate 200 000 extra rows** if you want a bigger table to play with.
 somaiyasat-ground-control/
 ├── run.py                 builds, serves :5500 + :8501, opens the browser
 ├── sql/
-│   ├── 01_schema.sql      tables, PK/FK, CHECK constraints
-│   ├── 02_seed.sql        4 pods / cubes / routers, payload priorities, ground passes
-│   ├── 03_views.sql       6 views: joins, aggregates, HAVING, nested subquery, UNION
-│   ├── 04_functions.sql   confirm_deployment, plan_pass, execute_pass, bench helpers
+│   ├── 01_schema.sql      10 tables, PK/FK, CHECK constraints (incl. real tracking)
+│   ├── 02_seed.sql        4 pods / cubes / routers, payload priorities, passes, stations
+│   ├── 03_views.sql       9 views: joins, aggregates, HAVING, nested subquery, UNION
+│   ├── 04_functions.sql   confirm_deployment, plan_pass, execute_pass,
+│   │                      link_score_from_pass, next_tracked_pass, bench helpers
 │   ├── 05_roles.sql       REVOKE PUBLIC, 3 roles, GRANTs  (passwords substituted)
 │   └── 06_indexes.sql     the two B-tree indexes (applied by the benchmark page)
 ├── scripts/
 │   ├── setup_db.py        drops & recreates the DB, runs 01–05
 │   ├── generate_telemetry.py  ~5000 packets, inserted as the ai_router role
+│   ├── _orbit.py          TLE parsing, SGP4 propagation, look angles (shared)
+│   ├── fetch_tles.py      CelesTrak -> satellite_tle via UPSERT  (the only network call)
+│   ├── predict_passes.py  SGP4 -> tracked_pass, link score computed in SQL
 │   ├── export_stats.py    read-only -> stats.json (mock fallback, never fails)
 │   └── prepare_assets.py  NASA textures + derived land mask (one time)
 ├── app/                                                         # dashboard, :8501
@@ -400,9 +542,9 @@ somaiyasat-ground-control/
 │   ├── theme.py           palette, local fonts, [ SECTION ] labels, plotly template
 │   ├── Home.py            login + mission-control globe + v_mission_status
 │   ├── components/globe_template.html   the globe screen (globe.gl, bundled locally)
-│   ├── static/            fonts, globe.gl, night texture  (served at /app/static/…)
+│   ├── static/            fonts, globe.gl, satellite.js, textures  (/app/static/…)
 │   └── pages/             Deployment Tracker, Telemetry Log, Health Dashboard,
-│                          Pass Planner, Index Benchmark
+│                          Pass Planner, Index Benchmark, Live Tracking
 ├── landing/                                                     # landing page, :5500
 │   ├── src/
 │   │   ├── components/ui/        shadcn, restyled to the mission palette
@@ -415,6 +557,7 @@ somaiyasat-ground-control/
 │   │   ├── hooks/                useStats, useScrollScene
 │   │   └── lib/                  gsap.ts, lenis.ts, landmask.ts, palette.ts
 │   └── public/assets/     textures (NASA), land mask, images
+├── data/tle_cache/        cached CelesTrak downloads, so --offline works
 ├── requirements.txt
 └── .env.example
 ```

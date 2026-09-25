@@ -85,6 +85,10 @@ SIDEBAR_NOTES = {
                    "Exp 9 - TCL, CO4 / Exp 6 - CO3"),
     "benchmark":  ("B-tree indexes and EXPLAIN (ANALYZE) before vs after",
                    "Exp 8 - Indexing, CO3"),
+    "tracking":   ("UPSERT (INSERT ... ON CONFLICT DO UPDATE) over real "
+                   "orbital data, plus a 3-way JOIN and GROUP BY aggregates "
+                   "(v_tracked_fleet, v_next_passes, v_station_workload)",
+                   "Exp 4 - DML, CO1 / Exp 5 - Aggregates, CO2 / Exp 6 - CO3"),
 }
 
 

@@ -9,7 +9,8 @@
 --   POD04/CUBE04 : not deployed yet      -> used for the transaction demo
 -- ============================================================================
 
-TRUNCATE deployment_log, ground_pass, telemetry, payload_priority,
+TRUNCATE tracked_pass, satellite_tle, ground_station,
+         deployment_log, ground_pass, telemetry, payload_priority,
          comm_router, satellite_cube, deployer_pod RESTART IDENTITY CASCADE;
 
 -- --------------------------------------------------------------------- pods
@@ -64,3 +65,32 @@ INSERT INTO deployment_log (pod_id, cube_id, action, outcome) VALUES
     ('POD01', 'CUBE01', 'CONFIRM_DEPLOYMENT', 'SUCCESS'),
     ('POD02', 'CUBE02', 'CONFIRM_DEPLOYMENT', 'SUCCESS'),
     ('POD03', 'CUBE03', 'CONFIRM_DEPLOYMENT', 'SUCCESS');
+
+
+-- ===========================================================================
+-- Ground station network.
+--
+-- Previously a Python literal in scripts/export_stats.py, duplicated in
+-- landing/src/hooks/useStats.ts. It is data, so it lives here now and both
+-- of those read it from the database instead.
+--
+-- Coordinates are the real sites. KJSSE Mumbai is the primary station and the
+-- one every pass prediction is computed against by default; the rest give the
+-- network the geographic spread a real amateur-satellite ground segment has.
+-- min_elevation_deg is the horizon mask: Svalbard sits on open terrain and can
+-- work lower passes, a city rooftop in Mumbai or Bengaluru cannot.
+-- ===========================================================================
+INSERT INTO ground_station
+    (station_id, name, country, latitude, longitude, altitude_m, min_elevation_deg, is_primary) VALUES
+    ('KJSSE', 'KJSSE Mumbai', 'India',     19.07260,  72.89910,  11, 10.0, TRUE),
+    ('HEL',   'Helsinki',     'Finland',   60.17000,  24.94000,  25, 10.0, TRUE),
+    ('SVAL',  'Svalbard',     'Norway',    78.22000,  15.65000, 460,  5.0, FALSE),
+    ('BLR',   'Bengaluru',    'India',     12.97000,  77.59000, 920, 12.0, FALSE),
+    ('SGP',   'Singapore',    'Singapore',  1.35000, 103.82000,  15, 10.0, FALSE),
+    ('SNT',   'Santiago',     'Chile',    -33.45000, -70.67000, 570, 10.0, FALSE);
+
+-- satellite_tle and tracked_pass are deliberately NOT seeded here: their
+-- contents are real and time-sensitive, so they are populated by
+--     python scripts/fetch_tles.py        (downloads current elements)
+--     python scripts/predict_passes.py    (propagates them with SGP4)
+-- Seeding a TLE would mean shipping a stale orbit that silently drifts wrong.
