@@ -26,21 +26,18 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import psycopg2
 from psycopg2.extras import execute_values
-from dotenv import load_dotenv
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _conn  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
-
-PGHOST = os.getenv("PGHOST", "localhost")
-PGPORT = os.getenv("PGPORT", "5432")
-PGDATABASE = os.getenv("PGDATABASE", "space_deploy")
-PGUSER = os.getenv("PGUSER", "postgres")
-PGPASSWORD = os.getenv("PGPASSWORD", "")
+PGUSER = _conn.settings()["user"]
 AI_ROUTER_PASSWORD = os.getenv("AI_ROUTER_PASSWORD", "router123")
 
 SEED = 20260923
@@ -119,9 +116,7 @@ def build_rows(total: int) -> list[tuple]:
 
 
 def connect(user: str, password: str):
-    return psycopg2.connect(
-        host=PGHOST, port=PGPORT, dbname=PGDATABASE, user=user, password=password
-    )
+    return _conn.connect(user=user, password=password)
 
 
 def main() -> None:
@@ -137,14 +132,14 @@ def main() -> None:
 
     if not args.keep:
         # ai_router has no DELETE, so the wipe is done by the superuser.
-        with connect(PGUSER, PGPASSWORD) as admin:
+        with connect(PGUSER, _conn.settings()['password']) as admin:
             with admin.cursor() as cur:
                 cur.execute("DELETE FROM telemetry")
             admin.commit()
         print("  cleared existing telemetry")
 
     if args.as_superuser:
-        user, password, label = PGUSER, PGPASSWORD, PGUSER
+        user, password, label = PGUSER, _conn.settings()['password'], PGUSER
     else:
         user, password, label = "ai_router", AI_ROUTER_PASSWORD, "ai_router (INSERT-only role)"
 
@@ -153,7 +148,7 @@ def main() -> None:
     except psycopg2.OperationalError as exc:
         print(f"  could not connect as {user}: {exc}")
         print("  falling back to the superuser")
-        conn, label = connect(PGUSER, PGPASSWORD), PGUSER
+        conn, label = connect(PGUSER, _conn.settings()['password']), PGUSER
 
     with conn:
         with conn.cursor() as cur:
@@ -169,7 +164,7 @@ def main() -> None:
     print(f"  inserted {len(rows)} packets as {label}")
 
     # Read back as the superuser: ai_router has no SELECT on telemetry.
-    with connect(PGUSER, PGPASSWORD) as admin:
+    with connect(PGUSER, _conn.settings()['password']) as admin:
         with admin.cursor() as cur:
             cur.execute(
                 """

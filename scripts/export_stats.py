@@ -58,18 +58,10 @@ def link_band(score: int) -> str:
 # database path
 # ---------------------------------------------------------------------------
 def from_database() -> dict:
-    import psycopg2
-    from dotenv import load_dotenv
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import _conn
 
-    load_dotenv(ROOT / ".env")
-    conn = psycopg2.connect(
-        host=os.getenv("PGHOST", "localhost"),
-        port=os.getenv("PGPORT", "5432"),
-        dbname=os.getenv("PGDATABASE", "space_deploy"),
-        user=os.getenv("PGUSER", "postgres"),
-        password=os.getenv("PGPASSWORD", ""),
-        connect_timeout=5,
-    )
+    conn = _conn.connect(connect_timeout=8)
 
     def rows(sql, params=None):
         with conn.cursor() as cur:

@@ -21,9 +21,29 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
-PGHOST = os.getenv("PGHOST", "localhost")
-PGPORT = os.getenv("PGPORT", "5432")
-PGDATABASE = os.getenv("PGDATABASE", "space_deploy")
+
+def _setting(name: str, default: str = "") -> str:
+    """
+    Read one connection setting.
+
+    Streamlit Community Cloud has no .env — it injects st.secrets instead — so
+    secrets win where they exist and the local .env is the fallback. Reading
+    st.secrets raises when no secrets file is configured at all, hence the
+    guard.
+    """
+    try:
+        if name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:
+        pass
+    return os.getenv(name, default)
+
+
+PGHOST = _setting("PGHOST", "localhost")
+PGPORT = _setting("PGPORT", "5432")
+PGDATABASE = _setting("PGDATABASE", "space_deploy")
+# Managed Postgres (Neon, Supabase) is TLS-only; 'prefer' keeps local simple.
+PGSSLMODE = _setting("PGSSLMODE", "prefer")
 
 # The three application roles created by sql/05_roles.sql.
 ROLES: dict[str, dict[str, str]] = {
@@ -76,7 +96,8 @@ def connect(role: str, password: str):
     return psycopg2.connect(
         host=PGHOST, port=PGPORT, dbname=PGDATABASE,
         user=role, password=password,
-        connect_timeout=5,
+        sslmode=PGSSLMODE,
+        connect_timeout=8,
         application_name=f"somaiyasat-ground-control/{role}",
     )
 

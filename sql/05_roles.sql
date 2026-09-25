@@ -7,8 +7,10 @@
 --   student_analyst  read-only coursework    -> SELECT on views + telemetry
 --   ai_router        the onboard router      -> INSERT telemetry, and that's it
 --
--- Passwords are placeholders; scripts/setup_db.py substitutes them from .env
--- before sending this file to the server, so no secret is ever stored here.
+-- Passwords and the database name are placeholders; scripts/setup_db.py
+-- substitutes them before sending this file to the server, so no secret is
+-- ever stored here and the same script works against a hosted database whose
+-- name is not ours to choose (Neon hands you "neondb", for example).
 --
 -- The file is re-runnable: each role is stripped of its privileges with
 -- REASSIGN OWNED / DROP OWNED and dropped before being recreated.
@@ -39,7 +41,7 @@ $$;
 -- Deny by default. PUBLIC is an implicit member of every role, so anything
 -- granted to PUBLIC would leak to all three roles below.
 -- ---------------------------------------------------------------------------
-REVOKE ALL ON DATABASE space_deploy FROM PUBLIC;
+REVOKE ALL ON DATABASE "__DATABASE__" FROM PUBLIC;
 REVOKE ALL ON SCHEMA   public       FROM PUBLIC;
 REVOKE ALL ON ALL TABLES    IN SCHEMA public FROM PUBLIC;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
@@ -51,7 +53,7 @@ CREATE ROLE student_analyst LOGIN PASSWORD '__STUDENT_ANALYST_PASSWORD__';
 CREATE ROLE ai_router       LOGIN PASSWORD '__AI_ROUTER_PASSWORD__';
 
 -- All three need to reach the database and see the schema.
-GRANT CONNECT ON DATABASE space_deploy TO ground_operator, student_analyst, ai_router;
+GRANT CONNECT ON DATABASE "__DATABASE__" TO ground_operator, student_analyst, ai_router;
 GRANT USAGE   ON SCHEMA   public       TO ground_operator, student_analyst, ai_router;
 
 -- ===========================================================================

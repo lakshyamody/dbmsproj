@@ -16,9 +16,9 @@ node_modules/
 landing/dist/
 
 # --- generated data --------------------------------------------------------
-# Written by scripts/export_stats.py from the live database.
-landing/public/data/stats.json
-app/data/stats.json
+# stats.json IS committed: the deployed landing page and the Streamlit Cloud
+# globe both read it, and neither has a database to regenerate it from at build
+# time. Refresh with `python scripts/export_stats.py` and commit the result.
 
 # --- scratch ---------------------------------------------------------------
 .DS_Store

@@ -19,18 +19,14 @@ from pathlib import Path
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-from dotenv import load_dotenv
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _conn  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SQL_DIR = ROOT / "sql"
 
-load_dotenv(ROOT / ".env")
-
-PGHOST = os.getenv("PGHOST", "localhost")
-PGPORT = os.getenv("PGPORT", "5432")
-PGDATABASE = os.getenv("PGDATABASE", "space_deploy")
-PGUSER = os.getenv("PGUSER", "postgres")
-PGPASSWORD = os.getenv("PGPASSWORD", "")
+PGDATABASE = _conn.settings()["dbname"]
 
 # Passwords for the three application roles, substituted into 05_roles.sql.
 ROLE_PASSWORDS = {
@@ -49,14 +45,21 @@ ORDERED_FILES = [
 
 
 def admin_connection(dbname: str):
-    return psycopg2.connect(
-        host=PGHOST, port=PGPORT, dbname=dbname,
-        user=PGUSER, password=PGPASSWORD,
-    )
+    return _conn.connect(dbname=dbname)
 
 
 def recreate_database() -> None:
-    """Drop and recreate the mission database from the `postgres` maintenance DB."""
+    """
+    Drop and recreate the mission database from the `postgres` maintenance DB.
+
+    Skipped against a managed host: providers hand you a database already and
+    generally will not let you drop it. 01_schema.sql drops every table itself,
+    so re-running is still clean either way.
+    """
+    if _conn.is_hosted():
+        print(f"  hosted database {PGDATABASE!r} — reusing it (no DROP/CREATE)")
+        return
+
     conn = admin_connection("postgres")
     conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
     try:
@@ -83,6 +86,8 @@ def read_sql(name: str) -> str:
         for placeholder, value in ROLE_PASSWORDS.items():
             # Doubling quotes keeps a password containing ' from breaking the literal.
             text = text.replace(placeholder, value.replace("'", "''"))
+        # The database name is not ours to choose on a managed host.
+        text = text.replace("__DATABASE__", PGDATABASE.replace('"', '""'))
     return text
 
 
@@ -140,7 +145,7 @@ def summarise() -> None:
 
 def main() -> None:
     print(f"SomaiyaSat Ground Control -- setup")
-    print(f"  target {PGUSER}@{PGHOST}:{PGPORT}/{PGDATABASE}\n")
+    print(f"  target {_conn.describe()}\n")
     try:
         recreate_database()
         run_scripts()
