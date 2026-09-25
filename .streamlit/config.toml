@@ -1,0 +1,101 @@
+[server]
+headless = true
+port = 8501
+enableStaticServing = true
+
+# ---------------------------------------------------------------------------
+# SomaiyaSat Ground Control - mission-control theme.
+# Pure black, one electric-blue accent, Inter + JetBrains Mono served locally
+# out of app/static/fonts (see enableStaticServing above).
+# ---------------------------------------------------------------------------
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/fonts/inter-latin-400-normal.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/fonts/inter-latin-500-normal.woff2"
+weight = 500
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/fonts/inter-latin-600-normal.woff2"
+weight = 600
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/fonts/inter-latin-700-normal.woff2"
+weight = 700
+style = "normal"
+
+[[theme.fontFaces]]
+family = "JetBrains Mono"
+url = "app/static/fonts/jetbrains-mono-latin-400-normal.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "JetBrains Mono"
+url = "app/static/fonts/jetbrains-mono-latin-500-normal.woff2"
+weight = 500
+style = "normal"
+
+[theme]
+base = "dark"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#0a0a0b"
+primaryColor = "#3d6bff"
+textColor = "#ffffff"
+
+font = "Inter, sans-serif"
+headingFont = "Inter, sans-serif"
+codeFont = "JetBrains Mono, monospace"
+
+baseRadius = "12px"
+buttonRadius = "12px"
+borderColor = "#1f1f1f"
+dataframeBorderColor = "#1f1f1f"
+dataframeHeaderBackgroundColor = "#0a0a0b"
+showWidgetBorder = true
+showSidebarBorder = true
+
+linkColor = "#3d6bff"
+codeBackgroundColor = "#0a0a0b"
+codeTextColor = "#8a8f98"
+
+metricValueFontWeight = 600
+
+# Semantic slots - these drive st.success / st.error / st.warning / st.info.
+greenColor = "#3ddc97"
+greenTextColor = "#3ddc97"
+greenBackgroundColor = "#0a1712"
+redColor = "#ff5c7a"
+redTextColor = "#ff5c7a"
+redBackgroundColor = "#1a0b0f"
+yellowColor = "#ffb547"
+yellowTextColor = "#ffb547"
+yellowBackgroundColor = "#1a1307"
+orangeColor = "#ffb547"
+orangeTextColor = "#ffb547"
+orangeBackgroundColor = "#1a1307"
+blueColor = "#3d6bff"
+blueTextColor = "#8ea6ff"
+blueBackgroundColor = "#080c1c"
+violetColor = "#3d6bff"
+violetTextColor = "#8ea6ff"
+violetBackgroundColor = "#080c1c"
+grayColor = "#8a8f98"
+grayTextColor = "#8a8f98"
+grayBackgroundColor = "#0a0a0b"
+
+chartCategoricalColors = [
+  "#3d6bff", "#3ddc97", "#ffb547", "#ff5c7a", "#8ea6ff", "#8a8f98",
+]
+chartSequentialColors = [
+  "#050d26", "#0b1a4d", "#122873", "#18359a", "#2450c9", "#3d6bff",
+  "#6b8fff", "#9ab3ff", "#c9d7ff", "#ffffff",
+]
