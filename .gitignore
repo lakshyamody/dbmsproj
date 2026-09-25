@@ -24,3 +24,4 @@ landing/dist/
 .DS_Store
 *.log
 landing/public/assets/source/*.pdf
+.vercel/
