@@ -1,6 +1,10 @@
 [server]
 headless = true
-port = 8501
+# No port here on purpose. run.py passes --server.port explicitly, and a hosted
+# runner (Streamlit Community Cloud) assigns its own -- pinning one in config
+# only invites a conflict.
+# enableStaticServing is REQUIRED: the globe loads its textures, fonts and the
+# globe.gl / satellite.js bundles from /app/static/.
 enableStaticServing = true
 
 [browser]
