@@ -93,7 +93,11 @@ GRANT SELECT ON
 TO student_analyst;
 
 -- Read-only helpers the dashboards need for their dropdowns / charts.
-GRANT SELECT ON satellite_cube, ground_pass, payload_priority TO student_analyst;
+-- deployer_pod is here so the analyst can build the mission-control payload
+-- itself; every column of it is already visible through v_mission_status, so
+-- this grants no new information, and the role stays strictly read-only.
+GRANT SELECT ON satellite_cube, ground_pass, payload_priority, deployer_pod
+TO student_analyst;
 
 -- Real orbital data is public information (CelesTrak publishes it), so the
 -- analyst may read it. Writing it is another matter: refreshing a TLE or

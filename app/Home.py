@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import streamlit as st
@@ -11,6 +12,7 @@ import db
 import theme
 
 APP_DIR = Path(__file__).resolve().parent
+ROOT = APP_DIR.parent
 GLOBE_TEMPLATE = APP_DIR / "components" / "globe_template.html"
 STATS_FILE = APP_DIR / "data" / "stats.json"
 
@@ -95,8 +97,33 @@ def load_stats(mtime: float) -> dict:
     try:
         return json.loads(STATS_FILE.read_text())
     except (OSError, ValueError):
-        return {"satellites": [], "payloads": [], "passes": [],
-                "stations": [], "totals": {}, "source": "unavailable"}
+        return {"satellites": [], "payloads": [], "passes": [], "stations": [],
+                "tracked": [], "tracked_passes": [], "totals": {},
+                "source": "unavailable"}
+
+
+@st.cache_data(show_spinner=False, ttl=120)
+def live_stats(role_key: str) -> dict | None:
+    """
+    Build the globe payload straight from the database, as the logged-in role.
+
+    Why this exists: stats.json is a file, and a deployed instance serves
+    whatever was committed. Orbital data expires -- element sets age and pass
+    windows pass -- so a baked file stops being true within a day and the
+    countdowns would all read PASS WINDOW OPEN. Reading live keeps the deployed
+    dashboard honest.
+
+    Returns None if it cannot be built, and the caller falls back to the file.
+    Cached for two minutes so panning the globe does not re-query.
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import export_stats
+        return export_stats.from_database(conn=db.get_conn())
+    except Exception:
+        # Any failure at all -- a role without SELECT (ai_router has none), a
+        # dropped connection, a schema mismatch -- falls back to the file.
+        return None
 
 
 def mission_control(payload: dict) -> None:
@@ -106,7 +133,12 @@ def mission_control(payload: dict) -> None:
     components.html(html.replace("/*__DATA__*/", blob), height=860, scrolling=False)
 
 
-stats = load_stats(STATS_FILE.stat().st_mtime if STATS_FILE.exists() else 0.0)
+# Live from the database where the role can read it; the exported file otherwise.
+stats = live_stats(role)
+if stats is None:
+    stats = load_stats(STATS_FILE.stat().st_mtime if STATS_FILE.exists() else 0.0)
+else:
+    stats = dict(stats, source="live")
 stats_for_view = dict(stats)
 stats_for_view["role"] = role
 
@@ -128,9 +160,11 @@ if totals:
            f"from live CelesTrak element sets with SGP4 — see Live Tracking. "
            if n_tracked else
            "No real element sets loaded; run `python scripts/fetch_tles.py`. ")
-        + f"Figures come from `app/data/stats.json` "
-        f"(source: `{stats.get('source', '?')}`) — regenerate with "
-        f"`python scripts/export_stats.py`."
+        + (f"Figures are read **live from PostgreSQL** as `{role}`."
+           if stats.get("source") == "live" else
+           f"Figures come from `app/data/stats.json` "
+           f"(source: `{stats.get('source', '?')}`) — regenerate with "
+           f"`python scripts/export_stats.py`.")
     )
 
 # ---------------------------------------------------------------------------

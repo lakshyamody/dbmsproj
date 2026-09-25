@@ -57,11 +57,23 @@ def link_band(score: int) -> str:
 # ---------------------------------------------------------------------------
 # database path
 # ---------------------------------------------------------------------------
-def from_database() -> dict:
+def from_database(conn=None) -> dict:
+    """
+    Build the whole payload from the database.
+
+    `conn` lets a caller supply its own connection instead of opening one. The
+    dashboard uses that to build this payload live, as the logged-in role, so a
+    deployed instance is not stuck serving whatever stats.json happened to be
+    committed -- element sets age and pass windows expire, so a file baked at
+    build time stops being true within a day. A borrowed connection is left
+    open for its owner to manage.
+    """
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import _conn
 
-    conn = _conn.connect(connect_timeout=8)
+    borrowed = conn is not None
+    if conn is None:
+        conn = _conn.connect(connect_timeout=8)
 
     def rows(sql, params=None):
         with conn.cursor() as cur:
@@ -163,7 +175,8 @@ def from_database() -> dict:
             """
         )
     finally:
-        conn.close()
+        if not borrowed:
+            conn.close()
 
     stations = [{
         "id": s["station_id"],
