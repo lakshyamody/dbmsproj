@@ -148,6 +148,8 @@ def from_database(conn=None) -> dict:
             """
         )
 
+        # The soonest windows, for display. Capped so the payload injected into
+        # the globe stays small.
         tracked_passes = rows(
             """
             SELECT track_id, norad_id, object_name, station_id, station_name,
@@ -158,6 +160,16 @@ def from_database(conn=None) -> dict:
             LIMIT  60
             """
         )
+
+        # Counted separately, NOT as len(tracked_passes): that list is capped at
+        # 60, so using its length would silently report 60 however many passes
+        # were actually computed.
+        tracked_counts = rows(
+            """
+            SELECT (SELECT count(*) FROM tracked_pass)                      AS computed,
+                   (SELECT count(*) FROM tracked_pass WHERE los_utc > now()) AS upcoming
+            """
+        )[0]
 
         # Ground stations now live in the database (they used to be a literal
         # in this file). Real pass prediction needs their coordinates and
@@ -297,7 +309,8 @@ def from_database(conn=None) -> dict:
             "total_bytes": int(totals["bytes"]),
             "ground_stations": len(stations),
             "tracked_objects": len(tracked),
-            "tracked_passes": len(tracked_passes),
+            "tracked_passes": int(tracked_counts["computed"]),
+            "tracked_passes_upcoming": int(tracked_counts["upcoming"]),
         },
     }
 
@@ -422,6 +435,7 @@ def from_mock() -> dict:
             "ground_stations": len(STATIONS),
             "tracked_objects": 0,
             "tracked_passes": 0,
+            "tracked_passes_upcoming": 0,
         },
     }
 

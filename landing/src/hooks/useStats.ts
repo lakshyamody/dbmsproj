@@ -76,6 +76,8 @@ export interface Totals {
   tracked_objects: number
   /** Real pass windows computed by SGP4 over the station network. */
   tracked_passes: number
+  /** How many of those have not happened yet. */
+  tracked_passes_upcoming: number
 }
 
 /** A real satellite in orbit now -- not part of the proposed mission. */
@@ -160,7 +162,7 @@ export const FALLBACK_STATS: Stats = {
     satellites: 4, deployed_satellites: 3, pods: 4, packets: 4998,
     unsent_packets: 1004, passes: 9, payload_modes: 4,
     total_bytes: 38832593, ground_stations: 6,
-    tracked_objects: 0, tracked_passes: 0,
+    tracked_objects: 0, tracked_passes: 0, tracked_passes_upcoming: 0,
   },
 }
 

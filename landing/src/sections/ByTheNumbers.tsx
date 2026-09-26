@@ -18,7 +18,8 @@ export function ByTheNumbers({ stats }: { stats: Stats }) {
     // The two below are real, not modelled: live orbital element sets and the
     // pass windows SGP4 computes from them.
     { k: "Real satellites tracked", v: t.tracked_objects, sub: "live CelesTrak element sets" },
-    { k: "Real passes computed", v: t.tracked_passes, sub: "SGP4 over the station network" },
+    { k: "Real passes computed", v: t.tracked_passes,
+      sub: `${t.tracked_passes_upcoming.toLocaleString()} still upcoming` },
   ]
 
   useGSAP(

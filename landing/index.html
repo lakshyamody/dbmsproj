@@ -23,9 +23,17 @@
     <noscript>
       <div style="padding: 48px; font-family: system-ui; color: #fff; background: #000">
         <h1>SomaiyaSat Ground Control</h1>
+        <!--
+          Deliberately no address here. This block cannot see
+          VITE_DASHBOARD_URL, so anything written into it is a second copy that
+          goes stale the moment the dashboard moves - which is exactly what
+          happened to the development address that used to sit here. The links
+          in the page itself are the single source.
+        -->
         <p>
           This page needs JavaScript for its 3D scenes. The mission dashboard is
-          available at <a href="http://localhost:8501">localhost:8501</a>.
+          a separate Streamlit application; enable JavaScript and use the
+          &ldquo;Enter mission control&rdquo; link, or see the project README.
         </p>
       </div>
     </noscript>
