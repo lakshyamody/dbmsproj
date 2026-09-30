@@ -220,15 +220,57 @@ a.backlink:hover{color:var(--white);border-color:rgba(61,107,255,.55);background
   <div id="boot">Acquiring orbit&hellip;</div>
 </div>
 
+<!--
+  Assets are served by Streamlit's own static file server at /app/static/.
+  That works locally, but Streamlit Community Cloud does not serve it: every
+  /app/static/ request there comes back as the app's own HTML shell with a 200,
+  so a <script> tag silently loads a web page instead of JavaScript and every
+  global stays undefined.
+
+  So: try local first, and if the library did not actually define itself, pull
+  the same file from the mirror instead. The check is on the global, not on the
+  network status, precisely because the failure mode is a successful response
+  carrying the wrong thing. document.write keeps the fallback synchronous, so
+  the code below still runs after the library exists.
+-->
 <script src="/app/static/vendor/globe.gl.min.js"></script>
-<!-- satellite.js (MIT), vendored like globe.gl so the page still makes zero
-     external requests. This is the SGP4 propagator; it turns the real element
-     sets in DATA.tracked into real positions. Verified to agree with the
-     Python sgp4 the database uses to 0.00004 degrees. -->
+<script>
+  window.__ASSET_BASE = "/app/static";
+  if (typeof Globe === "undefined") {
+    window.__ASSET_BASE = "__ASSET_MIRROR__";
+    document.write('<scr' + 'ipt src="__ASSET_MIRROR__/vendor/globe.gl.min.js"><\/scr' + 'ipt>');
+  }
+</script>
+<!-- satellite.js (MIT), vendored beside globe.gl. This is the SGP4 propagator;
+     it turns the real element sets in DATA.tracked into real positions.
+     Verified to agree with the Python sgp4 the database uses to 0.00004 deg. -->
 <script src="/app/static/vendor/satellite.min.js"></script>
+<script>
+  if (typeof satellite === "undefined") {
+    document.write('<scr' + 'ipt src="__ASSET_MIRROR__/vendor/satellite.min.js"><\/scr' + 'ipt>');
+  }
+  /* Fonts live in CSS, which cannot branch, so restate the faces against
+     whichever base actually worked. Harmless when the first one did. */
+  if (window.__ASSET_BASE !== "/app/static") {
+    var __b = window.__ASSET_BASE, __css = "";
+    [["Inter",400,"inter-latin-400-normal"],["Inter",500,"inter-latin-500-normal"],
+     ["Inter",600,"inter-latin-600-normal"],["Inter",700,"inter-latin-700-normal"],
+     ["JetBrains Mono",400,"jetbrains-mono-latin-400-normal"],
+     ["JetBrains Mono",500,"jetbrains-mono-latin-500-normal"]].forEach(function(f){
+      __css += "@font-face{font-family:'" + f[0] + "';font-style:normal;font-weight:" +
+               f[1] + ";font-display:swap;src:url('" + __b + "/fonts/" + f[2] +
+               ".woff2') format('woff2');}";
+    });
+    var __s = document.createElement("style"); __s.textContent = __css;
+    document.head.appendChild(__s);
+  }
+</script>
 <script>
 (function () {
 "use strict";
+
+/* Where the Earth maps come from -- see the comment above the loader tags. */
+var ASSET_BASE = window.__ASSET_BASE || "/app/static";
 
 var DATA = /*__DATA__*/;
 
@@ -447,8 +489,8 @@ var el = document.getElementById("globe");
 var stage = document.getElementById("stage");
 var world = Globe()(el)
   .backgroundColor("rgba(0,0,0,0)")
-  .globeImageUrl("/app/static/textures/earth_day.jpg")
-  .bumpImageUrl("/app/static/textures/earth_topology.jpg")
+  .globeImageUrl(ASSET_BASE + "/textures/earth_day.jpg")
+  .bumpImageUrl(ASSET_BASE + "/textures/earth_topology.jpg")
   .showAtmosphere(true)
   .atmosphereColor("#8fb2ff")
   .atmosphereAltitude(0.25)
@@ -558,7 +600,7 @@ updateSun(new Date());
     }
 
     /* city lights on the unlit hemisphere */
-    loadTexture("/app/static/textures/earth_night.jpg", function(tex){
+    loadTexture(ASSET_BASE + "/textures/earth_night.jpg", function(tex){
       mat.emissiveMap = tex;
       if (mat.emissive && mat.emissive.setRGB) mat.emissive.setRGB(1, 1, 1);
       mat.emissiveIntensity = 0.9;
@@ -567,7 +609,7 @@ updateSun(new Date());
 
     /* oceans return the sun, land does not — the glint is the strongest
      * single cue that this is a sphere and not a disc */
-    loadTexture("/app/static/textures/earth_specular.jpg", function(tex){
+    loadTexture(ASSET_BASE + "/textures/earth_specular.jpg", function(tex){
       mat.specularMap = tex;
       if (mat.specular && mat.specular.setRGB) mat.specular.setRGB(0.42, 0.52, 0.68);
       mat.shininess = 26;
@@ -575,7 +617,7 @@ updateSun(new Date());
     });
 
     /* cloud shell, parented to the globe so it inherits every transform */
-    loadTexture("/app/static/textures/earth_clouds.jpg", function(tex){
+    loadTexture(ASSET_BASE + "/textures/earth_clouds.jpg", function(tex){
       var globeMesh = null;
       world.scene().traverse(function(o){
         if (!globeMesh && o.isMesh && o.material === mat) globeMesh = o;

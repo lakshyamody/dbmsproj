@@ -134,9 +134,20 @@ def live_stats(role_key: str) -> dict | None:
         return None
 
 
+# Where the globe fetches its assets when Streamlit's own static file server is
+# not available. It is not available on Streamlit Community Cloud: a request to
+# /app/static/ there returns the app's HTML shell with a 200, so the libraries
+# load as a web page and every global stays undefined. The globe tries local
+# first and only falls back to this, so a local run still touches no network.
+ASSET_MIRROR = db._setting(
+    "GLOBE_ASSET_MIRROR",
+    "https://somaiyasat-ground-control.vercel.app/assets",
+).rstrip("/")
+
+
 def mission_control(payload: dict) -> None:
-    """One self-contained component: globe + panels, all assets served locally."""
-    html = GLOBE_TEMPLATE.read_text()
+    """One self-contained component: globe + panels."""
+    html = GLOBE_TEMPLATE.read_text().replace("__ASSET_MIRROR__", ASSET_MIRROR)
     blob = json.dumps(payload).replace("</", "<\\/").replace(" ", "\\u2028")
     components.html(html.replace("/*__DATA__*/", blob), height=860, scrolling=False)
 
