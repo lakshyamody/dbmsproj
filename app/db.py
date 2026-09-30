@@ -22,6 +22,13 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
 
+# Where each setting actually came from. Worth tracking: when a deployed
+# instance has no secrets configured, every value silently falls back to its
+# local default and the only symptom is "connection to localhost refused",
+# which looks like a database fault rather than a missing configuration.
+_SOURCES: dict[str, str] = {}
+
+
 def _setting(name: str, default: str = "") -> str:
     """
     Read one connection setting.
@@ -33,10 +40,18 @@ def _setting(name: str, default: str = "") -> str:
     """
     try:
         if name in st.secrets:
+            _SOURCES[name] = "secrets"
             return str(st.secrets[name])
     except Exception:
         pass
-    return os.getenv(name, default)
+
+    from_env = os.getenv(name)
+    if from_env is not None:
+        _SOURCES[name] = "env"
+        return from_env
+
+    _SOURCES[name] = "default"
+    return default
 
 
 PGHOST = _setting("PGHOST", "localhost")
@@ -44,6 +59,30 @@ PGPORT = _setting("PGPORT", "5432")
 PGDATABASE = _setting("PGDATABASE", "space_deploy")
 # Managed Postgres (Neon, Supabase) is TLS-only; 'prefer' keeps local simple.
 PGSSLMODE = _setting("PGSSLMODE", "prefer")
+
+
+def config_status() -> tuple[str, str]:
+    """
+    (level, message) describing where the connection settings came from.
+
+    Deliberately names no host and no password: this renders on a public page.
+    """
+    src = _SOURCES.get("PGHOST", "default")
+    if src == "secrets":
+        return "ok", "Connection settings loaded from Streamlit secrets."
+    if src == "env":
+        return "ok", "Connection settings loaded from the environment / .env."
+    return (
+        "error",
+        "**No database configuration found — using the built-in default "
+        "(`localhost`).**\n\n"
+        "That is correct for a laptop running its own PostgreSQL, but on a "
+        "deployed instance it means the secrets were never applied, and every "
+        "login will fail with *connection to localhost refused*.\n\n"
+        "Fix it in **Settings → Secrets**, paste the `PGHOST` / `PGPORT` / "
+        "`PGDATABASE` / `PGSSLMODE` keys plus the three role passwords, save, "
+        "then **Reboot** the app.",
+    )
 
 # The three application roles created by sql/05_roles.sql.
 ROLES: dict[str, dict[str, str]] = {

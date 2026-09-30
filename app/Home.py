@@ -60,6 +60,14 @@ if not db.is_logged_in():
                     "Connect", width="stretch", type="primary"
                 )
 
+        # Say up front whether this instance is configured at all. Without it a
+        # deployment with no secrets just reports "connection to localhost
+        # refused", which reads as a broken database rather than a missing
+        # setting.
+        _cfg_level, _cfg_msg = db.config_status()
+        if _cfg_level != "ok":
+            st.error(_cfg_msg)
+
         if submitted:
             ok, err = db.login(role, password)
             if ok:
