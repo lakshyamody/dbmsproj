@@ -117,6 +117,31 @@ footer {{
   height: 0 !important;
 }}
 
+/* Chrome that the HOST adds, not Streamlit itself.
+   Streamlit Community Cloud injects a "Manage app" control and a profile /
+   "Hosted with Streamlit" badge into the corner of a deployed app. They are
+   not part of this project and they invite a visitor to wander into the source
+   mid-demo, so they go.
+
+   Matched on substrings deliberately: these class names are build-hashed
+   (viewerBadge_container__r5tak, _profileContainer_gzau3_53, ...) and change
+   between Streamlit releases, so an exact selector would quietly stop working
+   on the next deploy. The config's toolbarMode = "minimal" removes the
+   developer menu properly; this covers what the host adds on top. */
+[data-testid="manage-app-button"],
+[data-testid="stAppViewerBadge"],
+[class*="viewerBadge"],
+[class*="_profileContainer"],
+[class*="_profilePreview"],
+[class*="_viewerBadge"],
+[class*="_terminalButton"],
+a[href*="share.streamlit.io"],
+a[href*="streamlit.io/cloud"] {{
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}}
+
 /* Keep the sidebar collapse control -- it is the only chrome that is useful. */
 div[data-testid="stSidebarCollapseButton"],
 div[data-testid="stSidebarCollapsedControl"] {{

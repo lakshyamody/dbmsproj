@@ -13,6 +13,19 @@ enableStaticServing = true
 # for the whole page, not just our own code.
 gatherUsageStats = false
 
+[client]
+# The dashboard is a finished thing people look at, not a notebook they poke.
+# "minimal" drops the developer menu Streamlit Community Cloud adds -- edit the
+# source, fork the repo, open a Codespace, clear the cache, deploy -- none of
+# which mean anything to someone being shown a mission dashboard, and all of
+# which invite a visitor to wander into the code mid-demo.
+toolbarMode = "minimal"
+
+# Keep tracebacks on. Not laziness: half this project's point is that a
+# permission is refused by PostgreSQL and the server's own words appear on
+# screen. Hiding error detail would hide the DCL demonstration.
+showErrorDetails = true
+
 # ---------------------------------------------------------------------------
 # SomaiyaSat Ground Control - mission-control theme.
 # Pure black, one electric-blue accent, Inter + JetBrains Mono served locally
