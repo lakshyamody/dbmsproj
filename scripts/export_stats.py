@@ -73,7 +73,7 @@ def from_database(conn=None) -> dict:
 
     borrowed = conn is not None
     if conn is None:
-        conn = _conn.connect(connect_timeout=8)
+        conn = _conn.connect(connect_timeout=30)
 
     def rows(sql, params=None):
         with conn.cursor() as cur:

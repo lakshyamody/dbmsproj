@@ -10,6 +10,7 @@ own message. Hiding the button would prove nothing.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -134,13 +135,28 @@ SIDEBAR_NOTES = {
 # ---------------------------------------------------------------------------
 # connection
 # ---------------------------------------------------------------------------
+# A serverless database suspends its compute when nobody is querying it, and
+# the first connection afterwards has to wait for it to start. Neon routinely
+# takes well over ten seconds from cold. The old eight-second limit meant the
+# first login after a quiet spell always failed with "timeout expired" -- which
+# reads like the credentials are wrong, when nothing is wrong at all.
+CONNECT_TIMEOUT = int(_setting("PGCONNECT_TIMEOUT", "30"))
+
+
 def connect(role: str, password: str):
     """Open a connection AS `role`. Raises psycopg2.OperationalError on bad login."""
     return psycopg2.connect(
         host=PGHOST, port=PGPORT, dbname=PGDATABASE,
         user=role, password=password,
         sslmode=PGSSLMODE,
-        connect_timeout=8,
+        connect_timeout=CONNECT_TIMEOUT,
+        # Give a suspended database time to come up rather than dying on the
+        # TCP handshake. keepalives stop a pooled connection being dropped
+        # silently while someone leaves the globe open.
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=3,
         application_name=f"somaiyasat-ground-control/{role}",
     )
 
@@ -150,15 +166,46 @@ def is_logged_in() -> bool:
 
 
 def login(role: str, password: str) -> tuple[bool, str]:
-    """Validate the credentials by actually connecting as that role."""
-    try:
-        conn = connect(role, password)
-    except psycopg2.OperationalError as exc:
-        return False, str(exc).strip()
-    conn.close()
-    st.session_state["role"] = role
-    st.session_state["password"] = password
-    return True, ""
+    """
+    Validate the credentials by actually connecting as that role.
+
+    One retry on a timeout, because the usual cause is a suspended serverless
+    database: the first attempt is what wakes it, and the second then succeeds
+    a few seconds later. Without it the user is told their login failed when
+    all that happened is the database was asleep.
+
+    A wrong password is NOT retried -- it fails instantly and definitively, and
+    repeating it would only slow down the answer.
+    """
+    last = ""
+    for attempt in (1, 2):
+        try:
+            conn = connect(role, password)
+        except psycopg2.OperationalError as exc:
+            last = str(exc).strip()
+            transient = ("timeout expired" in last
+                         or "could not connect" in last
+                         or "starting up" in last
+                         or "Connection refused" in last)
+            if transient and attempt == 1:
+                time.sleep(3)
+                continue
+            if transient:
+                return False, (
+                    "The database did not answer in time.\n\n"
+                    "This is usually a serverless database waking from idle "
+                    "rather than anything being wrong -- wait a few seconds and "
+                    "press Connect again. If it keeps happening, the host may "
+                    "be unreachable from this network (port 5432 is blocked on "
+                    "many campus and public networks).\n\n"
+                    f"```\n{last}\n```"
+                )
+            return False, last
+        conn.close()
+        st.session_state["role"] = role
+        st.session_state["password"] = password
+        return True, ""
+    return False, last
 
 
 def logout() -> None:

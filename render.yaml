@@ -1,0 +1,67 @@
+# Render Blueprint for the SomaiyaSat Ground Control dashboard.
+#
+# Why Render rather than Streamlit Community Cloud: both suspend a free app
+# when nobody is using it, but Community Cloud then demands a human click on a
+# "this app has gone to sleep" page before it will start again. Anyone opening
+# the link cold -- a collaborator, an examiner -- meets that page instead of the
+# project. Render wakes on the request itself, so a cold visit is slow (roughly
+# a minute) but never blocked.
+#
+# A second, quieter benefit: Streamlit's own static file server works here.
+# Community Cloud does not serve /app/static/, which is why the globe needs a
+# mirror for globe.gl, satellite.js and the Earth maps. On Render those load
+# from the app itself and the mirror never comes into play.
+#
+# To deploy: Render dashboard -> New -> Blueprint -> pick this repository.
+# Render reads this file and then asks for the values of every variable marked
+# sync: false, which is where the database credentials go. Nothing secret is
+# committed here.
+
+services:
+  - type: web
+    name: somaiyasat-ground-control
+    runtime: python
+    plan: free
+    # Neon lives in ap-southeast-1. Putting the dashboard in the same region
+    # keeps every query on a short hop; a dashboard in Ohio talking to a
+    # database in Singapore pays that round trip on every single page.
+    region: singapore
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    # $PORT is assigned by Render and must be bound on 0.0.0.0, or the service
+    # is marked unhealthy and killed.
+    startCommand: >-
+      streamlit run app/Home.py
+      --server.port $PORT
+      --server.address 0.0.0.0
+      --server.headless true
+    healthCheckPath: /_stcore/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+
+      # --- database connection -------------------------------------------
+      # sync: false means Render prompts for the value and stores it in the
+      # service, rather than reading it from this file. Use the POOLED Neon
+      # host: a web service opens and drops connections as visitors come and
+      # go, which is exactly what the pooler is for.
+      - key: PGHOST
+        sync: false
+      - key: PGPORT
+        value: "5432"
+      - key: PGDATABASE
+        sync: false
+      - key: PGSSLMODE
+        value: require
+
+      # --- the three application roles ------------------------------------
+      # The database owner's password is deliberately absent. The dashboard
+      # only ever connects as one of these three roles, so the owner
+      # credential never needs to leave your machine.
+      - key: GROUND_OPERATOR_PASSWORD
+        sync: false
+      - key: STUDENT_ANALYST_PASSWORD
+        sync: false
+      - key: AI_ROUTER_PASSWORD
+        sync: false
